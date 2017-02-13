@@ -41,7 +41,7 @@ def masked_dice_loss(y_true, y_pred):
     y_true_f = K.flatten(y_true)
     y_true_f = K.cast(y_true_f, 'int32')
     y_pred_f = K.flatten(y_pred)
-    idxs = K.gt(y_true_f, 0).nonzero()
+    idxs = y_true_f.nonzero()
     y_true_f = y_true_f[idxs] - 1
     y_pred_f = y_pred_f[idxs]
     intersection = K.sum(y_true_f * y_pred_f)

@@ -294,8 +294,9 @@ def assemble_model(input_shape, num_classes, num_main_blocks, main_block_depth,
                                      **long_skip_kwargs),
                       name='concat_top')
     if batch_norm:
-        layers.record(BatchNormalization(mode=0, axis=1)(layers.prev_layer),
-                    name='final_bn')
+        layers.record(BatchNormalization(mode=0, momentum=0.9,
+                                         axis=1)(layers.prev_layer),
+                      name='final_bn')
     layers.record(Activation('relu')(layers.prev_layer), name='final_relu')
     
     # OUTPUT (SOFTMAX)

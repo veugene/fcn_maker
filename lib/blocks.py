@@ -26,7 +26,8 @@ def _bn_relu_conv(nb_filter, nb_row, nb_col, subsample=False, upsample=False,
     def f(input):
         processed = input
         if batch_norm:
-            processed = BatchNormalization(mode=0, axis=1)(processed)
+            processed = BatchNormalization(mode=0, momentum=0.9,
+                                           axis=1)(processed)
         processed = Activation('relu')(processed)
         stride = (1, 1)
         if subsample:
@@ -153,7 +154,8 @@ def basic_block_mp(nb_filter, subsample=False, upsample=False, skip=True,
     def f(input):
         processed = input
         if batch_norm:
-            processed = BatchNormalization(mode=0, axis=1)(processed)
+            processed = BatchNormalization(mode=0, momentum=0.9,
+                                           axis=1)(processed)
         processed = Activation('relu')(processed)
         if subsample:
             processed = MaxPooling2D(pool_size=(2,2))(processed)

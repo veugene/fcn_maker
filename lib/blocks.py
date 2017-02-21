@@ -21,13 +21,14 @@ def _l2(decay):
 # Helper to build a BN -> relu -> conv block
 # This is an improved scheme proposed in http://arxiv.org/pdf/1603.05027v2.pdf
 def _bn_relu_conv(nb_filter, nb_row, nb_col, subsample=False, upsample=False,
-                  batch_norm=True, weight_decay=None):
-    
+                  batch_norm=True, weight_decay=None, bn_kwargs=None):
+    if bn_kwargs is None:
+        bn_kwargs = {}
+        
     def f(input):
         processed = input
         if batch_norm:
-            processed = BatchNormalization(mode=0, momentum=0.9,
-                                           axis=1)(processed)
+            processed = BatchNormalization(axis=1, **bn_kwargs)(processed)
         processed = Activation('relu')(processed)
         stride = (1, 1)
         if subsample:
@@ -81,16 +82,23 @@ def _shortcut(input, residual, subsample, upsample, weight_decay=None):
 # Follows improved proposed scheme in http://arxiv.org/pdf/1603.05027v2.pdf
 # Returns a final conv layer of nb_filter * 4
 def bottleneck(nb_filter, subsample=False, upsample=False, skip=True,
-               dropout=0., batch_norm=True, weight_decay=None):
+               dropout=0., batch_norm=True, weight_decay=None,
+               bn_kwargs=None):
     def f(input):
         processed = _bn_relu_conv(nb_filter, 1, 1,
-                                 subsample=subsample, batch_norm=batch_norm,
-                                 weight_decay=weight_decay)(input)
-        processed = _bn_relu_conv(nb_filter, 3, 3, batch_norm=batch_norm,
-                                 weight_decay=weight_decay)(processed)
+                                  subsample=subsample,
+                                  batch_norm=batch_norm,
+                                  weight_decay=weight_decay,
+                                  bn_kwargs=bn_kwargs)(input)
+        processed = _bn_relu_conv(nb_filter, 3, 3,
+                                  batch_norm=batch_norm,
+                                  weight_decay=weight_decay,
+                                  bn_kwargs=bn_kwargs)(processed)
         processed = _bn_relu_conv(nb_filter * 4, 1, 1,
-                                 upsample=upsample, batch_norm=batch_norm,
-                                 weight_decay=weight_decay)(processed)
+                                  upsample=upsample,
+                                  batch_norm=batch_norm,
+                                  weight_decay=weight_decay,
+                                  bn_kwargs=bn_kwargs)(processed)
         if dropout > 0:
             processed = Dropout(dropout)(processed)
             
@@ -108,21 +116,27 @@ def bottleneck(nb_filter, subsample=False, upsample=False, skip=True,
 # Use for resnet with layers <= 34
 # Follows improved proposed scheme in http://arxiv.org/pdf/1603.05027v2.pdf
 def basic_block(nb_filter, subsample=False, upsample=False, skip=True,
-                dropout=0., batch_norm=True, weight_decay=None):
+                dropout=0., batch_norm=True, weight_decay=None,
+                bn_kwargs=None):
     def f(input):
         processed = _bn_relu_conv(nb_filter, 3, 3,
-                                  subsample=subsample, batch_norm=batch_norm,
-                                  weight_decay=weight_decay)(input)
+                                  subsample=subsample,
+                                  batch_norm=batch_norm,
+                                  weight_decay=weight_decay,
+                                  bn_kwargs=bn_kwargs)(input)
         if dropout > 0:
             processed = Dropout(dropout)(processed)
         processed = _bn_relu_conv(nb_filter, 3, 3,
-                                  upsample=upsample, batch_norm=batch_norm,
-                                  weight_decay=weight_decay)(processed)
+                                  upsample=upsample,
+                                  batch_norm=batch_norm,
+                                  weight_decay=weight_decay,
+                                  bn_kwargs=bn_kwargs)(processed)
         
         output = processed
         if skip:
             output = _shortcut(input, processed,
-                               subsample=subsample, upsample=upsample,
+                               subsample=subsample,
+                               upsample=upsample,
                                weight_decay=weight_decay)
         return output
 
@@ -132,12 +146,13 @@ def basic_block(nb_filter, subsample=False, upsample=False, skip=True,
 # Builds a residual block with repeating bottleneck blocks.
 def residual_block(block_function, nb_filter, repetitions, skip=True,
                    dropout=0., subsample=False, upsample=False,
-                   batch_norm=True, weight_decay=None):
+                   batch_norm=True, weight_decay=None, bn_kwargs=None):
     def f(input):
         for i in range(repetitions):
             kwargs = {'nb_filter': nb_filter, 'skip': skip, 'dropout': dropout,
                       'subsample': False, 'upsample': False,
-                      'batch_norm': batch_norm, 'weight_decay': weight_decay}
+                      'batch_norm': batch_norm, 'weight_decay': weight_decay,
+                      'bn_kwargs': bn_kwargs}
             if i==0:
                 kwargs['subsample'] = subsample
             if i==repetitions-1:
@@ -150,12 +165,15 @@ def residual_block(block_function, nb_filter, repetitions, skip=True,
 
 # A single basic 3x3 convolution
 def basic_block_mp(nb_filter, subsample=False, upsample=False, skip=True,
-                   dropout=0., batch_norm=True, weight_decay=None):
+                   dropout=0., batch_norm=True, weight_decay=None,
+                   bn_kwargs=None):
+    if bn_kwargs is None:
+        bn_kwargs = {}
+        
     def f(input):
         processed = input
         if batch_norm:
-            processed = BatchNormalization(mode=0, momentum=0.9,
-                                           axis=1)(processed)
+            processed = BatchNormalization(axis=1, **bn_kwargs)(processed)
         processed = Activation('relu')(processed)
         if subsample:
             processed = MaxPooling2D(pool_size=(2,2))(processed)

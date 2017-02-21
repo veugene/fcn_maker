@@ -83,7 +83,7 @@ class _layer_tracker(object):
     
 def _make_long_skip(prev_layer, concat_layer, num_concat_filters,
                     num_target_filters, use_skip_blocks, repetitions,
-                    dropout, skip, batch_norm, weight_decay,
+                    dropout, skip, batch_norm, weight_decay, bn_kwargs,
                     merge_mode='concat', block=bottleneck):
     """
     Helper function to create a long skip connection with concatenation.
@@ -91,9 +91,9 @@ def _make_long_skip(prev_layer, concat_layer, num_concat_filters,
     """
     if use_skip_blocks:
         concat_layer = residual_block(block, nb_filter=num_concat_filters,
-                                 repetitions=repetitions, dropout=dropout,
-                                 skip=skip, batch_norm=batch_norm,
-                                 weight_decay=weight_decay)(concat_layer)
+                           repetitions=repetitions, dropout=dropout, skip=skip,
+                           batch_norm=batch_norm, bn_kwargs=bn_kwargs,
+                           weight_decay=weight_decay)(concat_layer)
     if merge_mode == 'sum':
         if prev_layer._keras_shape[1] != num_target_filters:
             prev_layer = Convolution2D(num_target_filters, 1, 1,
@@ -116,7 +116,7 @@ def assemble_model(input_shape, num_classes, num_main_blocks, main_block_depth,
                    long_skip=True, long_skip_merge_mode='concat',
                    mainblock=None, initblock=None, use_skip_blocks=True,
                    skipblock=None, relative_num_across_filters=1, dropout=0.,
-                   batch_norm=True, weight_decay=None):
+                   batch_norm=True, weight_decay=None, bn_kwargs=None):
     """
     input_shape : tuple specifiying the 2D image input shape.
     num_classes : number of classes in the segmentation output.
@@ -146,6 +146,7 @@ def assemble_model(input_shape, num_classes, num_main_blocks, main_block_depth,
     dropout : the dropout probability, introduced in every block.
     batch_norm : enable or disable batch normalization.
     weight_decay : the weight decay (L2 penalty) used in every convolution.
+    bn_kwargs : keyword arguments for keras batch normalization.
     """
     
     '''
@@ -188,7 +189,8 @@ def assemble_model(input_shape, num_classes, num_main_blocks, main_block_depth,
     block_kwargs = {'skip': short_skip,
                     'dropout': dropout,
                     'batch_norm': batch_norm,
-                    'weight_decay': weight_decay}
+                    'weight_decay': weight_decay,
+                    'bn_kwargs': bn_kwargs}
     
     '''
     If long skip is not (the defualt) identity, always pass these
@@ -294,8 +296,10 @@ def assemble_model(input_shape, num_classes, num_main_blocks, main_block_depth,
                                      **long_skip_kwargs),
                       name='concat_top')
     if batch_norm:
-        layers.record(BatchNormalization(mode=0, momentum=0.9,
-                                         axis=1)(layers.prev_layer),
+        if bn_kwargs is None:
+            bn_kwargs = {}
+        layers.record(BatchNormalization(axis=1,
+                                         **bn_kwargs)(layers.prev_layer),
                       name='final_bn')
     layers.record(Activation('relu')(layers.prev_layer), name='final_relu')
     

@@ -304,14 +304,19 @@ def assemble_model(input_shape, num_classes, num_main_blocks, main_block_depth,
     layers.record(Activation('relu')(layers.prev_layer), name='final_relu')
     
     # OUTPUT (SOFTMAX)
-    layers.record(Convolution2D(num_classes,1,1,activation='linear', 
+    if num_classes is not None:
+        # Linear classifier
+        layers.record(Convolution2D(num_classes,1,1,activation='linear', 
                   W_regularizer=_l2(weight_decay))(layers.prev_layer), name='sm_1')
-    layers.record(Permute((2,3,1))(layers.prev_layer), name='sm_2')
-    if num_classes==1:
-        output = Activation('sigmoid')(layers.prev_layer)
+        layers.record(Permute((2,3,1))(layers.prev_layer), name='sm_2')
+        if num_classes==1:
+            output = Activation('sigmoid')(layers.prev_layer)
+        else:
+            output = Activation(_softmax)(layers.prev_layer)
+        output = Permute((3,1,2))(output)
     else:
-        output = Activation(_softmax)(layers.prev_layer)
-    output = Permute((3,1,2))(output)
+        # No classifier
+        output = layers.prev_layer
     
     # MODEL
     model = Model(input=input, output=output)

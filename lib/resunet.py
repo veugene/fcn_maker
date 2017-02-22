@@ -81,9 +81,9 @@ class _layer_tracker(object):
     #return T.set_subtensor(output[indices], x)
     
     
-def _make_long_skip(prev_layer, concat_layer, num_concat_filters,
+def _make_long_skip(prev_layer, concat_layer, num_concat_filters, bn_kwargs,
                     num_target_filters, use_skip_blocks, repetitions,
-                    dropout, skip, batch_norm, weight_decay, bn_kwargs,
+                    dropout, skip, batch_norm, weight_decay, num_residuals,
                     merge_mode='concat', block=bottleneck):
     """
     Helper function to create a long skip connection with concatenation.
@@ -115,8 +115,9 @@ def assemble_model(input_shape, num_classes, num_main_blocks, main_block_depth,
                    num_init_blocks, input_num_filters, short_skip=True,
                    long_skip=True, long_skip_merge_mode='concat',
                    mainblock=None, initblock=None, use_skip_blocks=True,
-                   skipblock=None, relative_num_across_filters=1, dropout=0.,
-                   batch_norm=True, weight_decay=None, bn_kwargs=None):
+                   skipblock=None, relative_num_across_filters=1,
+                   num_residuals=1, dropout=0., batch_norm=True,
+                   weight_decay=None, bn_kwargs=None):
     """
     input_shape : tuple specifiying the 2D image input shape.
     num_classes : number of classes in the segmentation output.
@@ -143,6 +144,7 @@ def assemble_model(input_shape, num_classes, num_main_blocks, main_block_depth,
     skipblock : a layer defining the skipblock (basic_block_mp by default).
     relative_num_across_filters : multiply the number of channels in the across
         path (and in each skipblock, if they exist) by this value.
+    num_residuals : the number of parallel residual functions per block.
     dropout : the dropout probability, introduced in every block.
     batch_norm : enable or disable batch normalization.
     weight_decay : the weight decay (L2 penalty) used in every convolution.
@@ -190,6 +192,7 @@ def assemble_model(input_shape, num_classes, num_main_blocks, main_block_depth,
                     'dropout': dropout,
                     'batch_norm': batch_norm,
                     'weight_decay': weight_decay,
+                    'num_residuals': num_residuals,
                     'bn_kwargs': bn_kwargs}
     
     '''

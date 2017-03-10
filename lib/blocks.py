@@ -103,7 +103,7 @@ def bottleneck(nb_filter, subsample=False, upsample=False, skip=True,
                                       bn_kwargs=bn_kwargs)(residual)
             if dropout > 0:
                 residual = Dropout(dropout)(residual)
-            residiuals.append(residual)
+            residuals.append(residual)
             
         if len(residuals)>1:
             output = merge(residuals, mode='sum')

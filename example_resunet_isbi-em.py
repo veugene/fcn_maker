@@ -7,6 +7,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 import numpy as np
+import tifffile as tf
 import os
 from lib.resunet import (assemble_model, 
                          categorical_crossentropy_ND,
@@ -15,7 +16,6 @@ from lib.resunet import (assemble_model,
 from lib.blocks import (basic_block_mp,
                         basic_block,
                         bottleneck)
-from lib.files import load_tiff_volume
 from keras.preprocessing.image import ImageDataGenerator
 from lib.logging import FileLogger
 from keras.callbacks import (EarlyStopping, 
@@ -29,6 +29,7 @@ import shutil
 #from theano import tensor as T
 from collections import OrderedDict
 sys.setrecursionlimit(99999)
+
 
 # -----------------------------------------------------------------------------
 model_kwargs = OrderedDict((
@@ -126,8 +127,8 @@ if training:
     print("Preparing data")
 
     # Load data
-    X = load_tiff_volume(ds_path['train-volume']).T.astype(np.float32)
-    Y = load_tiff_volume(ds_path['train-labels']).T.astype(np.int32)
+    X = tf.imread(ds_path['train-volume']).astype(np.float32)
+    Y = tf.imread(ds_path['train-labels']).astype(np.int32)
     Y[Y==255] = 1
 
     # Invert labels (if dice loss)
@@ -231,9 +232,7 @@ if training:
    
 else:
     # Prediction
-    import tifffile as tf
-    
-    X = load_tiff_volume(ds_path['test-volume']).T.astype(np.float32)
+    X = tf.imread(ds_path['test-volume']).astype(np.float32)
     mean = X.reshape(X.shape[0],
                      np.prod(X.shape[1:])).mean(axis=-1)[:,None,None]
     std  = X.reshape(X.shape[0],

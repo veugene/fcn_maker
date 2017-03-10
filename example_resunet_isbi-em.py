@@ -86,9 +86,10 @@ def scheduler(epoch):
 ''' Accuracy metric '''
 def accuracy(y_true, y_pred):
     if model_kwargs['num_classes']==1:
-        return K.mean(K.equal(K.squeeze(y_true, 1), K.squeeze(K.round(y_pred),3)))
+        return K.mean(K.equal(y_true, K.round(y_pred)))
     else:
-        return K.mean(K.equal(K.squeeze(y_true, 1), K.argmax(y_pred, axis=-1)))
+        return K.mean(K.equal(K.squeeze(y_true, 1),
+                              K.argmax(y_pred, axis=-1)))
 
 
 """

@@ -9,10 +9,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import tifffile as tf
 import os
-from lib.resunet import (assemble_model, 
-                         categorical_crossentropy_ND,
-                         dice_loss,
-                         cce_with_regional_penalty)
+from lib.fcn import assemble_model
+from lib.loss import dice_loss
 from lib.blocks import (basic_block_mp,
                         basic_block,
                         bottleneck)
@@ -161,7 +159,7 @@ if training:
                       ".yaml"), 'w').write(yaml_string)
 
     #model.summary()
-    model.compile(loss=dice_loss, 
+    model.compile(loss=dice_loss(), 
                   optimizer=optimizer, 
                   metrics=[accuracy])
 
@@ -245,7 +243,7 @@ else:
     model.load_weights(os.path.join(results_dir, "weights_resunet_" + 
                                     str(experiment_ID) + ".hdf5"))
                        
-    model.compile(loss=dice_loss, 
+    model.compile(loss=dice_loss(), 
                   optimizer=optimizer, 
                   metrics=[accuracy])                                
     

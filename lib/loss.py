@@ -7,6 +7,8 @@ def categorical_crossentropy(weighted=False, masked_class=None):
     '''
     Categorical crossentropy for N-dimensional inputs.
     
+    Expects integer or one-hot class labeling in y_true.
+    
     weighted : if True, loss is automatically reweighted with respecte to
         classes so that each class is given equal importance (simulates class
         balancing).
@@ -57,7 +59,7 @@ def dice_loss(target_class=1, masked_class=None):
     '''
     Dice loss.
     
-    Expects integer class labeling in y_true.
+    Expects integer or one-hot class labeling in y_true.
     Expects outputs in range [0, 1] in y_pred.
     
     Computes the soft dice loss considering all classes in target_class as one
@@ -75,6 +77,9 @@ def dice_loss(target_class=1, masked_class=None):
     # Define the keras expression.
     def dice(y_true, y_pred):
         smooth = 1
+        if y_true.ndim==y_pred.ndim:
+            # Change ground truth from categorical to integer format.
+            y_true = K.argmax(y_true, axis=1)
         y_true_f = K.flatten(y_true)
         y_true_f = K.cast(y_true_f, 'int32')
         y_pred_f = K.flatten(y_pred)

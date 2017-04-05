@@ -15,10 +15,6 @@ from .blocks import (bottleneck,
                      basic_block,
                      basic_block_mp,
                      residual_block)
-from .loss import (categorical_crossentropy_ND,
-                   dice_loss,
-                   masked_dice_loss,
-                   cce_with_regional_penalty)
 
 
 def _l2(decay):

@@ -146,6 +146,8 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
     init : string or function specifying the initializer for layers.
     batch_norm : enable or disable batch normalization.
     bn_kwargs : keyword arguments for keras batch normalization.
+    num_outputs : the number of model outputs, each with num_classifier
+        classifiers.
     """
     
     '''
@@ -306,20 +308,23 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
     
     # OUTPUT (SOFTMAX)
     if num_classes is not None:
-        # Linear classifier
-        layers.record(Convolution2D(num_classes,1,1,activation='linear', 
-                  W_regularizer=_l2(weight_decay))(layers.prev_layer), name='sm_1')
-        layers.record(Permute((2,3,1))(layers.prev_layer), name='sm_2')
-        if num_classes==1:
-            output = Activation('sigmoid')(layers.prev_layer)
-        else:
-            output = Activation(_softmax)(layers.prev_layer)
-        output = Permute((3,1,2))(output)
+        all_outputs = []
+        for i in range(num_outputs):
+            # Linear classifier
+            layers.record(Convolution2D(num_classes,1,1,activation='linear', 
+                    W_regularizer=_l2(weight_decay))(layers.prev_layer), name='sm_1')
+            layers.record(Permute((2,3,1))(layers.prev_layer), name='sm_2')
+            if num_classes==1:
+                output = Activation('sigmoid')(layers.prev_layer)
+            else:
+                output = Activation(_softmax)(layers.prev_layer)
+            output = Permute((3,1,2))(output)
+            all_outputs.append(output)
     else:
         # No classifier
-        output = layers.prev_layer
+        all_outputs = layers.prev_layer
     
     # MODEL
-    model = Model(input=input, output=output)
+    model = Model(input=input, output=all_outputs)
 
     return model

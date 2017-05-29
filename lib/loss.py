@@ -9,7 +9,7 @@ def categorical_crossentropy(weighted=False, masked_class=None):
     
     Expects integer or one-hot class labeling in y_true.
     
-    weighted : if True, loss is automatically reweighted with respecte to
+    weighted : if True, loss is automatically reweighted with respect to
         classes so that each class is given equal importance (simulates class
         balancing).
     masked_class : the (integer) class(es) that is/are masked out of the loss.

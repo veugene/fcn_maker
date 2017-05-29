@@ -318,10 +318,6 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
         v_print("INIT UP {}: {}".format(b, x._keras_shape))
         
     # Final convolution
-    x = Convolution2D(input_num_filters, 3, 3,
-                      init=init, border_mode='same',
-                      W_regularizer=_l2(weight_decay),
-                      name='final_conv')(x)
     if long_skip:
         num_across_filters = input_num_filters*relative_num_across_filters
         repetitions = get_repetitions(num_main_blocks)
@@ -331,6 +327,11 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
                             num_target_filters=input_num_filters,
                             name='concat_top',
                             **long_skip_kwargs)
+    x = Convolution2D(input_num_filters, 3, 3,
+                      init=init, border_mode='same',
+                      W_regularizer=_l2(weight_decay),
+                      name='final_conv')(x)
+    
     if batch_norm:
         if bn_kwargs is None:
             bn_kwargs = {}

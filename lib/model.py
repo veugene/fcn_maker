@@ -93,11 +93,11 @@ def _make_long_skip(prev_layer, concat_layer, num_concat_filters, bn_kwargs,
     if merge_mode == 'sum':
         if prev_layer._keras_shape[1] != num_target_filters:
             prev_layer = Convolution2D(num_target_filters, 1, 1,
-                                 init='he_normal', border_mode='valid',
+                                 init=init, border_mode='valid',
                                  W_regularizer=_l2(weight_decay))(prev_layer)
         if concat_layer._keras_shape[1] != num_target_filters:
             concat_layer = Convolution2D(num_target_filters, 1, 1,
-                                 init='he_normal', border_mode='valid',
+                                 init=init, border_mode='valid',
                                  W_regularizer=_l2(weight_decay))(concat_layer)
     #zero_pad = Lambda(_pad_to_fit,
                       #output_shape=concat_layer._keras_shape[1:],
@@ -107,16 +107,19 @@ def _make_long_skip(prev_layer, concat_layer, num_concat_filters, bn_kwargs,
     return merged
     
     
-def assemble_model(input_shape, num_classes, num_main_blocks, main_block_depth,
-                   num_init_blocks, input_num_filters, short_skip=True,
+def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
+                   main_block_depth, input_num_filters, short_skip=True,
                    long_skip=True, long_skip_merge_mode='concat',
                    mainblock=None, initblock=None, use_skip_blocks=True,
                    skipblock=None, relative_num_across_filters=1,
-                   num_residuals=1, dropout=0., batch_norm=True,
-                   weight_decay=None, bn_kwargs=None):
+                   num_residuals=1, dropout=0., weight_decay=None, 
+                   init='he_normal', batch_norm=True,  bn_kwargs=None):
     """
     input_shape : tuple specifiying the 2D image input shape.
     num_classes : number of classes in the segmentation output.
+    num_init_blocks : the number of blocks of type initblock, above mainblocks.
+        These blocks always have the same number of channels as the first
+        convolutional layer in the model.
     num_main_blocks : the number of blocks of type mainblock, below initblocks.
         These blocks double (halve) in number of channels at each downsampling
         (upsampling).
@@ -124,9 +127,6 @@ def assemble_model(input_shape, num_classes, num_main_blocks, main_block_depth,
         repetitions of each mainblock. A list must contain as many values as
         there are main_blocks in the downward (or upward -- it's mirrored) path
         plus one for the across path.
-    num_init_blocks : the number of blocks of type initblock, above mainblocks.
-        These blocks always have the same number of channels as the first
-        convolutional layer in the model.
     input_num_filters : the number channels in the first (last) convolutional
         layer in the model (and of each initblock).
     short_skip : ResNet-like shortcut connections from the input of each block
@@ -142,8 +142,9 @@ def assemble_model(input_shape, num_classes, num_main_blocks, main_block_depth,
         path (and in each skipblock, if they exist) by this value.
     num_residuals : the number of parallel residual functions per block.
     dropout : the dropout probability, introduced in every block.
-    batch_norm : enable or disable batch normalization.
     weight_decay : the weight decay (L2 penalty) used in every convolution.
+    init : string or function specifying the initializer for layers.
+    batch_norm : enable or disable batch normalization.
     bn_kwargs : keyword arguments for keras batch normalization.
     """
     
@@ -189,7 +190,8 @@ def assemble_model(input_shape, num_classes, num_main_blocks, main_block_depth,
                     'batch_norm': batch_norm,
                     'weight_decay': weight_decay,
                     'num_residuals': num_residuals,
-                    'bn_kwargs': bn_kwargs}
+                    'bn_kwargs': bn_kwargs,
+                    'init': init}
     
     '''
     If long skip is not (the defualt) identity, always pass these
@@ -208,7 +210,7 @@ def assemble_model(input_shape, num_classes, num_main_blocks, main_block_depth,
     
     # Initial convolution
     layers.record(Convolution2D(input_num_filters, 3, 3,
-                               init='he_normal', border_mode='same',
+                               init=init, border_mode='same',
                                W_regularizer=_l2(weight_decay))(input),
                   name='first_conv')
     
@@ -282,7 +284,7 @@ def assemble_model(input_shape, num_classes, num_main_blocks, main_block_depth,
         
     # Final convolution
     layers.record(Convolution2D(input_num_filters, 3, 3,
-                               init='he_normal', border_mode='same',
+                               init=init, border_mode='same',
                                W_regularizer=_l2(weight_decay))(layers.prev_layer),
                   name='final_conv')
     if long_skip:

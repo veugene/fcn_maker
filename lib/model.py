@@ -54,9 +54,10 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
         These blocks double (halve) in number of channels at each downsampling
         (upsampling).
     main_block_depth : An integer or list of integers specifying the number of
-        repetitions of each mainblock. A list must contain as many values as
-        there are main_blocks in the downward (or upward -- it's mirrored) path
-        plus one for the across path.
+        repetitions of each mainblock. A list must contain 2*num_main_blocks+1
+        values (there are num_mainblocks on the contracting path and on the 
+        expanding path, as well as as one on the across path). Zero is a valid
+        depth.
     input_num_filters : The number channels in the first (last) convolutional
         layer in the model (and of each initblock).
     short_skip : A boolean specifying whether to use ResNet-like shortcut
@@ -102,17 +103,11 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
     main_block_depth can be a list per block or a single value 
     -- ensure the list length is correct (if list) and that no length is 0
     '''
-    if not hasattr(main_block_depth, '__len__'):
-        if main_block_depth==0:
-            raise ValueError("main_block_depth must never be zero")
-    else:
-        if len(main_block_depth)!=num_main_blocks+1:
+    if hasattr(main_block_depth, '__len__'):
+        if len(main_block_depth)!=2*num_main_blocks+1:
             raise ValueError("main_block_depth must have " 
-                             "`num_main_blocks+1` values when " 
+                             "`2*num_main_blocks+1` values when " 
                              "passed as a list")
-        for d in main_block_depth:
-            if d==0:
-                raise ValueError("main_block_depth must never be zero")
             
     '''
     Constant kwargs passed to the init and main blocks.

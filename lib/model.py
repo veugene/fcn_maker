@@ -34,77 +34,6 @@ def _softmax(x):
     e = K.exp(x - K.max(x, axis=-1, keepdims=True))
     s = K.sum(e, axis=-1, keepdims=True)
     return e / s
-
-    
-class _layer_tracker(object):
-    """
-    Helper object to keep track of previously added layer and allow layer
-    retrieval by name from a dictionary.
-    """
-    def __init__(self):
-        self.layer_dict = {}
-        self.prev_layer = None
-        
-    def record(self, layer, name):
-        layer.name = name
-        self.layer_dict[name] = layer
-        self.prev_layer = layer
-        
-    def __getitem__(self, name):
-        return self.layer_dict[name]
-    
-    
-#def _pad_to_fit(x, target_shape):
-    #"""
-    #Spatially pad a tensor's feature maps with zeros as evenly as possible
-    #(center it) to fit the target shape.
-    
-    #Expected target shape is larger than the shape of the tensor.
-    
-    #NOTE: padding may be unequal on either side of the map if the target
-    #dimension is odd. This is why keras's ZeroPadding2D isn't used.
-    #"""
-    #pad_0 = {}
-    #pad_1 = {}
-    #for dim in [2, 3]:
-        #pad_0[dim] = (target_shape[dim]-x.shape[dim])//2
-        #pad_1[dim] = target_shape[dim]-x.shape[dim]-pad_0[dim]
-    #output = T.zeros(target_shape)
-    #indices = (slice(None),
-               #slice(None),
-               #slice(pad_0[2], target_shape[2]-pad_1[2]),
-               #slice(pad_0[3], target_shape[3]-pad_1[3]))
-    #return T.set_subtensor(output[indices], x)
-    
-    
-def _make_long_skip(prev_layer, concat_layer, num_concat_filters, bn_kwargs,
-                    num_target_filters, use_skip_blocks, repetitions,
-                    dropout, skip, batch_norm, weight_decay, num_residuals,
-                    merge_mode='concat', block=bottleneck):
-    """
-    Helper function to create a long skip connection with concatenation.
-    Concatenated information is not transformed if use_skip_blocks is False.
-    """
-    if use_skip_blocks:
-        concat_layer = residual_block(block, nb_filter=num_concat_filters,
-                           repetitions=repetitions, dropout=dropout, skip=skip,
-                           batch_norm=batch_norm, bn_kwargs=bn_kwargs,
-                           weight_decay=weight_decay)(concat_layer)
-    if merge_mode == 'sum':
-        if prev_layer._keras_shape[1] != num_target_filters:
-            prev_layer = Convolution2D(num_target_filters, 1, 1,
-                                 init=init, border_mode='valid',
-                                 W_regularizer=_l2(weight_decay))(prev_layer)
-        if concat_layer._keras_shape[1] != num_target_filters:
-            concat_layer = Convolution2D(num_target_filters, 1, 1,
-                                 init=init, border_mode='valid',
-                                 W_regularizer=_l2(weight_decay))(concat_layer)
-    #zero_pad = Lambda(_pad_to_fit,
-                      #output_shape=concat_layer._keras_shape[1:],
-                      #arguments={'target_shape': concat_layer.shape})
-    #prev_layer = zero_pad(prev_layer)
-    merged = merge([prev_layer, concat_layer], mode=merge_mode, concat_axis=1)
-    return merged
     
     
 def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
@@ -184,6 +113,27 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
         for d in main_block_depth:
             if d==0:
                 raise ValueError("main_block_depth must never be zero")
+            
+    '''
+    Constant kwargs passed to the init and main blocks.
+    '''
+    block_kwargs = {'skip': short_skip,
+                    'dropout': dropout,
+                    'batch_norm': batch_norm,
+                    'weight_decay': weight_decay,
+                    'num_residuals': num_residuals,
+                    'bn_kwargs': bn_kwargs,
+                    'init': init}
+    
+    '''
+    If long skip is not (the defualt) identity, always pass these
+    parameters to make_long_skip
+    '''
+    long_skip_kwargs = {'use_skip_blocks': use_skip_blocks,
+                        'repetitions': 1,
+                        'merge_mode': long_skip_merge_mode,
+                        'block': skipblock}
+    long_skip_kwargs.update(block_kwargs)
     
     '''
     Returns the depth of a mainblock for a given pooling level
@@ -203,25 +153,67 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
             return None
     
     '''
-    Constant kwargs passed to the init and main blocks.
+    Helper function to create a long skip connection with concatenation.
+    Concatenated information is not transformed if use_skip_blocks is False.
     '''
-    block_kwargs = {'skip': short_skip,
-                    'dropout': dropout,
-                    'batch_norm': batch_norm,
-                    'weight_decay': weight_decay,
-                    'num_residuals': num_residuals,
-                    'bn_kwargs': bn_kwargs,
-                    'init': init}
+    def make_long_skip(prev_layer, concat_layer, num_concat_filters, bn_kwargs,
+                       num_target_filters, use_skip_blocks, repetitions,
+                       dropout, skip, batch_norm, weight_decay, num_residuals,
+                       merge_mode='concat', block=bottleneck):
     
-    '''
-    If long skip is not (the defualt) identity, always pass these
-    parameters to _make_long_skip
-    '''
-    long_skip_kwargs = {'use_skip_blocks': use_skip_blocks,
-                        'repetitions': 1,
-                        'merge_mode': long_skip_merge_mode,
-                        'block': skipblock}
-    long_skip_kwargs.update(block_kwargs)
+        if use_skip_blocks:
+            concat_layer = residual_block( \
+                                       block,
+                                       nb_filter=num_concat_filters,
+                                       repetitions=repetitions,
+                                       dropout=dropout,
+                                       skip=skip,
+                                       batch_norm=batch_norm,
+                                       bn_kwargs=bn_kwargs,
+                                       weight_decay=weight_decay)(concat_layer)
+        if merge_mode == 'sum':
+            if prev_layer._keras_shape[1] != num_target_filters:
+                prev_layer = Convolution2D( \
+                                 num_target_filters, 1, 1,
+                                 init=init,
+                                 border_mode='valid',
+                                 W_regularizer=_l2(weight_decay))(prev_layer)
+            if concat_layer._keras_shape[1] != num_target_filters:
+                concat_layer = Convolution2D(\
+                                 num_target_filters, 1, 1,
+                                 init=init, border_mode='valid',
+                                 W_regularizer=_l2(weight_decay))(concat_layer)
+                
+        #def _pad_to_fit(x, target_shape):
+            #"""
+            #Spatially pad a tensor's feature maps with zeros as evenly as
+            #possible (center it) to fit the target shape.
+            
+            #Expected target shape is larger than the shape of the tensor.
+            
+            #NOTE: padding may be unequal on either side of the map if the
+            #target dimension is odd. This is why keras's ZeroPadding2D isn't
+            #used.
+            #"""
+            #pad_0 = {}
+            #pad_1 = {}
+            #for dim in [2, 3]:
+                #pad_0[dim] = (target_shape[dim]-x.shape[dim])//2
+                #pad_1[dim] = target_shape[dim]-x.shape[dim]-pad_0[dim]
+            #output = T.zeros(target_shape)
+            #indices = (slice(None),
+                    #slice(None),
+                    #slice(pad_0[2], target_shape[2]-pad_1[2]),
+                    #slice(pad_0[3], target_shape[3]-pad_1[3]))
+            #return T.set_subtensor(output[indices], x)
+        #zero_pad = Lambda(_pad_to_fit,
+                          #output_shape=concat_layer._keras_shape[1:],
+                          #arguments={'target_shape': concat_layer.shape})
+        #prev_layer = zero_pad(prev_layer)
+        
+        merged = merge([prev_layer, concat_layer],
+                       mode=merge_mode, concat_axis=1)
+        return merged
     
     '''
     Build all the blocks on the contracting and expanding paths.
@@ -282,7 +274,7 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
         if long_skip:
             num_across_filters = num_filters*relative_num_across_filters
             repetitions = get_repetitions(num_main_blocks)
-            x = _make_long_skip(prev_layer=x,
+            x = make_long_skip(prev_layer=x,
                                 concat_layer=tensors[depth],
                                 num_concat_filters=num_across_filters,
                                 num_target_filters=num_filters,
@@ -303,7 +295,7 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
         if long_skip:
             num_across_filters = input_num_filters*relative_num_across_filters
             repetitions = get_repetitions(num_main_blocks)
-            x = _make_long_skip(prev_layer=x,
+            x = make_long_skip(prev_layer=x,
                                 concat_layer=tensors[depth],
                                 num_concat_filters=num_across_filters,
                                 num_target_filters=input_num_filters,
@@ -321,7 +313,7 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
     if long_skip:
         num_across_filters = input_num_filters*relative_num_across_filters
         repetitions = get_repetitions(num_main_blocks)
-        x = _make_long_skip(prev_layer=x,
+        x = make_long_skip(prev_layer=x,
                             concat_layer=tensors[0],
                             num_concat_filters=num_across_filters,
                             num_target_filters=input_num_filters,

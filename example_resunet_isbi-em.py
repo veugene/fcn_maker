@@ -15,7 +15,7 @@ from lib.blocks import (basic_block_mp,
                         basic_block,
                         bottleneck)
 from keras.preprocessing.image import ImageDataGenerator
-from lib.logging import FileLogger
+from lib.callbacks import FileLogger
 from keras.callbacks import (EarlyStopping, 
                              LearningRateScheduler, 
                              ModelCheckpoint)

@@ -163,8 +163,8 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
     def make_long_skip(prev_x, concat_x, num_concat_filters, bn_kwargs,
                        num_target_filters, use_skip_blocks, repetitions,
                        dropout, skip, batch_norm, weight_decay, num_residuals,
-                       merge_mode='concat', block=bottleneck):
-    
+                       merge_mode='concat', block=bottleneck, name=None):
+        
         if use_skip_blocks:
             concat_x = residual_block( \
                                        block,
@@ -183,7 +183,8 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
                                 ndim=ndim,
                                 kernel_initializer=init,
                                 padding='valid',
-                                kernel_regularizer=_l2(weight_decay))(prev_x)
+                                kernel_regularizer=_l2(weight_decay),
+                                name=name+'_prev')(prev_x)
             if concat_x._keras_shape[1] != num_target_filters:
                 concat_x = Convolution(\
                                 filters=num_target_filters,
@@ -191,7 +192,8 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
                                 ndim=ndim,
                                 kernel_initializer=init,
                                 padding='valid',
-                                kernel_regularizer=_l2(weight_decay))(concat_x)
+                                kernel_regularizer=_l2(weight_decay),
+                                name=name+'_concat')(concat_x)
                 
         #def _pad_to_fit(x, target_shape):
             #"""
@@ -241,7 +243,8 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
                     ndim=ndim,
                     kernel_initializer=init,
                     padding='same',
-                    kernel_regularizer=_l2(weight_decay))(model_input)
+                    kernel_regularizer=_l2(weight_decay),
+                    name='first_conv')(model_input)
     tensors[0] = x
     
     # DOWN (initial subsampling blocks)
@@ -251,6 +254,7 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
                            nb_filter=nb_filter,
                            repetitions=1,
                            subsample=True,
+                           name='initblock_d'+str(b),
                            **block_kwargs)(x)
         tensors[depth] = x
         v_print("INIT DOWN {}: {}".format(b, x._keras_shape))
@@ -263,6 +267,7 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
                            nb_filter=num_filters,
                            repetitions=get_repetitions(b),
                            subsample=True,
+                           name='mainblock_d'+str(b),
                            **block_kwargs)(x)
         v_print("MAIN DOWN {} (depth {}): {}".format( \
             depth, get_repetitions(b), x._keras_shape))
@@ -275,6 +280,7 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
                        repetitions=get_repetitions(num_main_blocks),
                        subsample=True,
                        upsample=True,
+                       name='mainblock_a',
                        **block_kwargs)(x) 
     v_print("ACROSS (depth {}): {}".format( \
           get_repetitions(num_main_blocks), x._keras_shape))
@@ -290,11 +296,13 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
                                concat_x=tensors[depth],
                                num_concat_filters=num_across_filters,
                                num_target_filters=num_filters,
+                               name='concat_main_'+str(b),
                                **long_skip_kwargs)
         x = residual_block(mainblock,
                            nb_filter=num_filters,
                            repetitions=get_repetitions(b),
                            upsample=True,
+                           name='mainblock_u'+str(b),
                            **block_kwargs)(x)
         v_print("MAIN UP {} (depth {}): {}".format( \
             b, get_repetitions(b), x._keras_shape))
@@ -309,11 +317,13 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
                                concat_x=tensors[depth],
                                num_concat_filters=num_across_filters,
                                num_target_filters=input_num_filters,
+                               name='concat_init_'+str(b),
                                **long_skip_kwargs)
         x = residual_block(initblock,
                            nb_filter=nb_filter,
                            repetitions=1,
                            upsample=True,
+                           name='initblock_u'+str(b),
                            **block_kwargs)(x)
         v_print("INIT UP {}: {}".format(b, x._keras_shape))
         
@@ -325,18 +335,20 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
                            concat_x=tensors[0],
                            num_concat_filters=num_across_filters,
                            num_target_filters=input_num_filters,
+                           name='concat_top',
                            **long_skip_kwargs)
     x = Convolution(filters=input_num_filters,
                     kernel_size=3,
                     ndim=ndim,
                     kernel_initializer=init,
                     padding='same',
-                    kernel_regularizer=_l2(weight_decay))(x)
+                    kernel_regularizer=_l2(weight_decay),
+                    name='final_conv')(x)
     
     if batch_norm:
         if bn_kwargs is None:
             bn_kwargs = {}
-        x = BatchNormalization(axis=1, **bn_kwargs)(x)
+        x = BatchNormalization(axis=1, name='final_bn', **bn_kwargs)(x)
     x = Activation('relu')(x)
     
     # OUTPUT (SOFTMAX)
@@ -348,7 +360,8 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
                                  kernel_size=1,
                                  ndim=ndim
                                  activation='linear',
-                                 kernel_regularizer=_l2(weight_decay))(x)
+                                 kernel_regularizer=_l2(weight_decay),
+                                 name='logit_conv')(x)
             output = Permute((2,3,1))(output)
             if num_classes==1:
                 output = Activation('sigmoid')(output)

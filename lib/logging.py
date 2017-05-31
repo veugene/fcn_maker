@@ -31,7 +31,7 @@ class FileLogger(Callback):
             self.log_file.flush()
 
     def on_train_begin(self, logs={}):
-        self.nb_epoch = self.params['nb_epoch']
+        self.epochs = self.params['epochs']
         self.epoch = 0
         if self.log_file_path is not None:
             try:
@@ -43,31 +43,20 @@ class FileLogger(Callback):
 
     def on_epoch_begin(self, epoch, logs={}):
         self.epoch = epoch
-        self.seen = 0
-
 
     def on_batch_begin(self, batch, logs={}):
         self.batch = batch
-        if self.seen < self.params['nb_sample']:
-            self.log_values = {}
+        self.log_values = {}
 
     def on_batch_end(self, batch, logs={}):
         batch_size = logs.get('size', 0)
-        self.seen += batch_size
-
-        for k in self.params['metrics']:
-            if k in logs:
-                self.log_values[k] = logs[k]
-
-        if self.seen < self.params['nb_sample']:
-            self.write_log(self.log_values)
-
-    def on_epoch_end(self, epoch, logs={}):
-        self.epoch = epoch
         for k in self.params['metrics']:
             if k in logs:
                 self.log_values[k] = logs[k]
         self.write_log(self.log_values)
+
+    def on_epoch_end(self, epoch, logs={}):
+        pass
 
 class GradientLogger(Callback):
     '''Callback that prints gradient to file.

@@ -38,7 +38,7 @@ def _softmax(x):
     return e / s
     
     
-def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
+def assemble_model(input_shape, num_classes, num_adapt_blocks, num_main_blocks,
                    main_block_depth, num_filters, short_skip=True,
                    long_skip=True, long_skip_merge_mode='concat',
                    mainblock=None, initblock=None, skipblock=None,
@@ -49,9 +49,9 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
     """
     input_shape : A tuple specifiying the 2D image input shape.
     num_classes : The number of classes in the segmentation output.
-    num_init_blocks : The number of blocks of type initblock, above mainblocks.
-        These blocks always have the same number of channels as the first
-        convolutional layer in the model.
+    num_adapt_blocks : The number of blocks of type initblock, above 
+        mainblocks. These blocks always have the same number of channels as
+        the first convolutional layer in the model.
     num_main_blocks : The number of blocks of type mainblock, below initblocks.
         These blocks double (halve) the number of channels at each downsampling
         (upsampling).
@@ -63,11 +63,11 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
     num_filters : Can be an int or a list of ints, specifying the number of
         filters for each block.
         If an int, sets the number filters in the first and last convolutional
-        layer in the model, as well as of every init_block. Each main_block
+        layer in the model, as well as of every adapt_block. Each main_block
         doubles (halves) the number of filters for each decrease (increase) in
         resolution.
         If a list, specifies the number of filters for each convolution/block.
-        Must be of length 2*(num_main_blocks+num_init_blocks)+3.
+        Must be of length 2*(num_main_blocks+num_adapt_blocks)+3.
     short_skip : A boolean specifying whether to use ResNet-like shortcut
         connections from the input of each block to its output. The inputs are
         summed with the outputs.
@@ -125,12 +125,12 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
     -- ensure the list length is correct (if list) or convert to list
     '''
     if hasattr(num_filters, '__len__'):
-        if len(num_filters)!=2*(num_main_blocks+num_init_blocks)+3:
+        if len(num_filters)!=2*(num_main_blocks+num_adapt_blocks)+3:
             raise ValueError("num_filters must have "
-                             "`2*(num_main_blocks+num_init_blocks)+3` values "
+                             "`2*(num_main_blocks+num_adapt_blocks)+3` values "
                              "when passed as a list")
     else:
-        num_filters_list = [num_filters]*(num_init_blocks+1)
+        num_filters_list = [num_filters]*(num_adapt_blocks+1)
         num_filters_list += [num_filters*(2**b) \
                                              for b in range(num_main_blocks+1)]
         num_filters_list += num_filters_list[-2::-1]
@@ -261,7 +261,7 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
     tensors[0] = x
     
     # DOWN (initial subsampling blocks)
-    for b in range(0, num_init_blocks):
+    for b in range(0, num_adapt_blocks):
         depth = b+1
         n_filters = num_filters[1+b]
         x = residual_block(initblock,
@@ -271,12 +271,12 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
                            name='initblock_d'+str(b),
                            **block_kwargs)(x)
         tensors[depth] = x
-        v_print("INIT DOWN {}: {}".format(b, x._keras_shape))
+        v_print("ADAPT DOWN {}: {}".format(b, x._keras_shape))
     
     # DOWN (main blocks)
     for b in range(0, num_main_blocks):
-        depth = b+1+num_init_blocks
-        n_filters = num_filters[1+num_init_blocks+b]
+        depth = b+1+num_adapt_blocks
+        n_filters = num_filters[1+num_adapt_blocks+b]
         x = residual_block(mainblock,
                            filters=n_filters,
                            repetitions=main_block_depth[b],
@@ -289,7 +289,7 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
                     "".format(b, main_block_depth[b], x._keras_shape))
         
     # ACROSS
-    n_filters = num_filters[1+num_init_blocks+num_main_blocks]
+    n_filters = num_filters[1+num_adapt_blocks+num_main_blocks]
     x = residual_block(mainblock,
                        filters=n_filters,
                        repetitions=main_block_depth[num_main_blocks],
@@ -303,8 +303,8 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
 
     # UP (main blocks)
     for b in range(num_main_blocks-1, -1, -1):
-        depth = b+1+num_init_blocks
-        n_filters = num_filters[-1-1-num_init_blocks-b]
+        depth = b+1+num_adapt_blocks
+        n_filters = num_filters[-1-1-num_adapt_blocks-b]
         if long_skip:
             x = make_long_skip(prev_x=x,
                                concat_x=tensors[depth],
@@ -321,7 +321,7 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
                     "".format(b, main_block_depth[-b-1], x._keras_shape))
         
     # UP (final upsampling blocks)
-    for b in range(num_init_blocks-1, -1, -1):
+    for b in range(num_adapt_blocks-1, -1, -1):
         depth = b+1
         n_filters = num_filters[-1-1-b]
         if long_skip:
@@ -335,7 +335,7 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
                            upsample=True,
                            name='initblock_u'+str(b),
                            **block_kwargs)(x)
-        v_print("INIT UP {}: {}".format(b, x._keras_shape))
+        v_print("ADAPT UP {}: {}".format(b, x._keras_shape))
         
     # Final convolution
     if long_skip:

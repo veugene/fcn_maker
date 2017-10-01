@@ -8,7 +8,6 @@ from keras.layers import (Input,
                           concatenate)
 from keras.layers.normalization import BatchNormalization
 from keras import backend as K
-from theano import tensor as T
 from keras.regularizers import l2
 import numpy as np
 from .blocks import (bottleneck,
@@ -211,34 +210,43 @@ def assemble_model(input_shape, num_classes, num_adapt_blocks, num_main_blocks,
                                        padding='valid',
                                        kernel_regularizer=_l2(weight_decay),
                                        name=_unique(name+'_concat'))(concat_x)
-                
-        #def _pad_to_fit(x, target_shape):
-            #"""
-            #Spatially pad a tensor's feature maps with zeros as evenly as
-            #possible (center it) to fit the target shape.
-            
-            #Expected target shape is larger than the shape of the tensor.
-            
-            #NOTE: padding may be unequal on either side of the map if the
-            #target dimension is odd. This is why keras's ZeroPadding2D isn't
-            #used.
-            #"""
-            #pad_0 = {}
-            #pad_1 = {}
-            #for dim in [2, 3]:
-                #pad_0[dim] = (target_shape[dim]-x.shape[dim])//2
-                #pad_1[dim] = target_shape[dim]-x.shape[dim]-pad_0[dim]
-            #output = T.zeros(target_shape)
-            #indices = (slice(None),
-                    #slice(None),
-                    #slice(pad_0[2], target_shape[2]-pad_1[2]),
-                    #slice(pad_0[3], target_shape[3]-pad_1[3]))
-            #return T.set_subtensor(output[indices], x)
-        #zero_pad = Lambda(_pad_to_fit,
-                          #output_shape=concat_x._keras_shape[1:],
-                          #arguments={'target_shape': concat_x.shape})
-        #prev_x = zero_pad(prev_x)
         
+        def _pad_to_fit(x, target_shape):
+            """
+            Spatially pad a tensor's feature maps with zeros as evenly as
+            possible (center it) to fit the target shape.
+            
+            Expected target shape is larger than the shape of the tensor.
+            """
+            data_format = K.image_data_format()
+            if data_format not in {'channels_first', 'channels_last'}:
+                raise ValueError('Unknown data_format ' + str(data_format))
+            if ndim==2:
+                if data_format=='channels_first':
+                    dims = [2, 3]
+                else:
+                    dims = [1, 2]
+                spatial_padding = K.spatial_2d_padding
+            if ndim==3:
+                if data_format=='channels_first':
+                    dims = [2, 3, 4]
+                else:
+                    dims = [1, 2, 3]
+                spatial_padding = K.spatial_3d_padding
+            padding = []
+            for dim in dims:
+                diff = target_shape[dim] - x.shape[dim]
+                padding.append((0, diff))
+            x = spatial_padding(x, padding=padding, data_format=data_format)
+            return x
+        
+        # Zero-pad upward path to match long skip resolution, if needed.
+        zero_pad = Lambda(_pad_to_fit,
+                          output_shape=concat_x._keras_shape[1:],
+                          arguments={'target_shape': concat_x.shape})
+        prev_x = zero_pad(prev_x)
+        
+        # Merge.
         if long_skip_merge_mode=='sum':
             merged = add([prev_x, concat_x])
         elif long_skip_merge_mode=='concat':

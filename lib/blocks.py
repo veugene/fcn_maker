@@ -1,5 +1,6 @@
 from keras.layers import (Activation,
                           Dropout,
+                          AlphaDropout,
                           Lambda)
 from keras.layers.merge import add as merge_add
 from keras.layers.normalization import BatchNormalization
@@ -14,26 +15,17 @@ from keras import backend as K
 
 
 """
-Add a unique identifier to a name string.
-"""
-def get_unique_name(name, prefix=None):
-    if prefix is not None:
-        name = prefix + '_' + name
-    name += '_' + str(K.get_uid(name))
-    return name
-
-
-"""
 Wrappers around spatial layers to allow 2D or 3D, optionally.
 """
-def Convolution(*args, ndim=2, name=None, **kwargs):
-    name = get_unique_name(name, 'convolution')
+def Convolution(*args, ndim=2, **kwargs):
+    layer = None
     if ndim==2:
-        return Convolution2D(*args, name=name, **kwargs)
+        layer = Convolution2D(*args, **kwargs)
     elif ndim==3:
-        return Convolution3D(*args, name=name, **kwargs)
+        layer = Convolution3D(*args, **kwargs)
     else:
         raise ValueError("ndim must be 2 or 3")
+    return layer
     
 def MaxPooling(*args, ndim=2, **kwargs):
     if ndim==2:
@@ -50,45 +42,67 @@ def UpSampling(*args, ndim=2, **kwargs):
         return UpSampling3D(*args, **kwargs)
     else:
         raise ValueError("ndim must be 2 or 3")
+    
+    
+"""
+Return a nonlinearity from the core library or return the provided function.
+"""
+def get_nonlinearity(nonlin):
+    if isinstance(nonlin, str):
+        return Activation(nonlin)
+    return nonlin()
 
 
-"""
-Return a new instance of l2 regularizer, or return None
-"""
+# Return a new instance of l2 regularizer, or return None
 def _l2(decay):
     if decay is not None:
         return l2(decay)
     else:
         return None
+    
+
+# Add a unique identifier to a name string.
+def _get_unique_name(name, prefix=None):
+    if prefix is not None:
+        name = prefix + '_' + name
+    name += '_' + str(K.get_uid(name))
+    return name
 
 
-# Helper to build a BN -> relu -> conv block
+# Helper to build a norm -> relu -> conv block
 # This is an improved scheme proposed in http://arxiv.org/pdf/1603.05027v2.pdf
-def _bn_relu_conv(filters, kernel_size, subsample=False, upsample=False,
-                  batch_norm=True, weight_decay=None, bn_kwargs=None,
-                  init='he_normal', ndim=2, name=None):
-    if bn_kwargs is None:
-        bn_kwargs = {}
-    name = get_unique_name('', name)
+def _norm_relu_conv(filters, kernel_size, subsample=False, upsample=False,
+                    nonlinearity='relu', normalization=BatchNormalization,
+                    weight_decay=None,  norm_kwargs=None, init='he_normal',
+                    ndim=2, name=None):
+    if norm_kwargs is None:
+        norm_kwargs = {}
+    name = _get_unique_name('', name)
         
     def f(input):
-        x = input
-        if batch_norm:
-            x = BatchNormalization(axis=1, name='bn_'+name, **bn_kwargs)(x)
-        x = Activation('relu')(x)
+        processed = input
+        if normalization is not None:
+            processed = normalization(name=name+'_norm',
+                                      **norm_kwargs)(processed)
+        processed = get_nonlinearity(nonlinearity)(processed)
         stride = 1
         if subsample:
             stride = 2
         if upsample:
-            x = UpSampling(size=2, ndim=ndim)(x)
-        
+            processed = UpSampling(size=2, ndim=ndim)(processed)
+        return Convolution(filters=filters, kernel_size=kernel_size, ndim=ndim,
+                           strides=stride,
+                           kernel_initializer=init,
+                           padding='same', name=name+'_conv',
+                           kernel_regularizer=_l2(weight_decay))(processed)
+
     return f
 
 
 # Adds a shortcut between input and residual block and merges them with 'sum'
-def _shortcut(input, residual, subsample, upsample, weight_decay=None,
-              init='he_normal', ndim=2, name=None):
-    name = get_unique_name('shortcut', name)
+def _shortcut(input, residual, subsample, upsample, normalization=None,
+              weight_decay=None, init='he_normal', ndim=2, name=None):
+    name = _get_unique_name('shortcut', name)
     
     # Expand channels of shortcut to match residual.
     # Stride appropriately to match residual (width, height)
@@ -125,40 +139,58 @@ def _shortcut(input, residual, subsample, upsample, weight_decay=None,
                                kernel_size=1, ndim=ndim,
                                kernel_initializer=init, padding='valid',
                                kernel_regularizer=_l2(weight_decay),
-                               name='conv_'+name)(shortcut)
+                               name=name+'_conv')(shortcut)
+    
+    out = merge_add([shortcut, residual])
         
-    return merge_add([shortcut, residual])
+    return out
 
 
 # Bottleneck architecture for > 34 layer resnet.
 # Follows improved proposed scheme in http://arxiv.org/pdf/1603.05027v2.pdf
 # Returns a final conv layer of filters * 4
-def bottleneck(filters, subsample=False, upsample=False, skip=True, dropout=0.,
-               batch_norm=True, weight_decay=None, num_residuals=1, 
-               bn_kwargs=None, init='he_normal', ndim=2, name=None):
-    name = get_unique_name('bottleneck', name)
+def bottleneck(filters, subsample=False, upsample=False, skip=True,
+               dropout=0., normalization=BatchNormalization, weight_decay=None,
+               num_residuals=1, norm_kwargs=None, init='he_normal', 
+               nonlinearity='relu', ndim=2, name=None):
+    name = _get_unique_name('bottleneck', name)
     def f(input):
         residuals = []
-        kwargs = {'batch_norm': batch_norm,
-                  'weight_decay': weight_decay,
-                  'bn_kwargs': bn_kwargs,
-                  'init': init,
-                  'ndim': ndim,
-                  'name': name}
         for i in range(num_residuals):
-            residual = _bn_relu_conv(filters=filters,
-                                     kernel_size=1,
-                                     subsample=subsample,
-                                     **kwargs)(input)
-            residual = _bn_relu_conv(filters=filters,
-                                     kernel_size=3,
-                                     **kwargs)(residual)
-            residual = _bn_relu_conv(filters=4*filters,
-                                     kernel_size=1,
-                                     upsample=upsample
-                                     **kwargs)(residual)
+            residual = _norm_relu_conv(filters,
+                                       kernel_size=1,
+                                       subsample=subsample,
+                                       normalization=normalization,
+                                       weight_decay=weight_decay,
+                                       norm_kwargs=norm_kwargs,
+                                       init=init,
+                                       nonlinearity=nonlinearity,
+                                       ndim=ndim,
+                                       name=name)(input)
+            residual = _norm_relu_conv(filters,
+                                       kernel_size=3,
+                                       normalization=normalization,
+                                       weight_decay=weight_decay,
+                                       norm_kwargs=norm_kwargs,
+                                       init=init,
+                                       nonlinearity=nonlinearity,
+                                       ndim=ndim,
+                                       name=name)(residual)
+            residual = _norm_relu_conv(filters * 4,
+                                       kernel_size=1,
+                                       upsample=upsample,
+                                       normalization=normalization,
+                                       weight_decay=weight_decay,
+                                       norm_kwargs=norm_kwargs,
+                                       init=init,
+                                       nonlinearity=nonlinearity,
+                                       ndim=ndim,
+                                       name=name)(residual)
             if dropout > 0:
-                residual = Dropout(dropout)(residual)
+                if nonlinearity=='selu':
+                    residual = AlphaDropout(dropout)(residual)
+                else:
+                    residual = Dropout(dropout)(residual)
             residuals.append(residual)
             
         if len(residuals)>1:
@@ -168,6 +200,7 @@ def bottleneck(filters, subsample=False, upsample=False, skip=True, dropout=0.,
         if skip:
             output = _shortcut(input, output,
                                subsample=subsample, upsample=upsample,
+                               normalization=normalization,
                                weight_decay=weight_decay, init=init,
                                ndim=ndim, name=name)
         return output
@@ -179,29 +212,35 @@ def bottleneck(filters, subsample=False, upsample=False, skip=True, dropout=0.,
 # Use for resnet with layers <= 34
 # Follows improved proposed scheme in http://arxiv.org/pdf/1603.05027v2.pdf
 def basic_block(filters, subsample=False, upsample=False, skip=True,
-                dropout=0., batch_norm=True, weight_decay=None,
-                num_residuals=1, bn_kwargs=None, init='he_normal', ndim=2,
-                name=None):
-    name = get_unique_name('basic_block', name)
+                dropout=0., normalization=BatchNormalization, 
+                weight_decay=None, num_residuals=1, norm_kwargs=None,
+                init='he_normal', nonlinearity='relu', ndim=2, name=None):
+    name = _get_unique_name('basic_block', name)
     def f(input):
         residuals = []
-        kwargs = {'batch_norm': batch_norm,
-                  'weight_decay': weight_decay,
-                  'bn_kwargs': bn_kwargs,
-                  'init': init,
-                  'ndim': ndim,
-                  'name': name}
         for i in range(num_residuals):
-            residual = _bn_relu_conv(filters=filters,
-                                     kernel_size=3,
-                                     subsample=subsample,
-                                     **kwargs)(input)
+            residual = _norm_relu_conv(filters,
+                                       kernel_size=3,
+                                       subsample=subsample,
+                                       normalization=normalization,
+                                       weight_decay=weight_decay,
+                                       norm_kwargs=norm_kwargs,
+                                       init=init,
+                                       nonlinearity=nonlinearity,
+                                       ndim=ndim,
+                                       name=name)(input)
             if dropout > 0:
                 residual = Dropout(dropout)(residual)
-            residual = _bn_relu_conv(filters=filters,
-                                     kernel_size=3,
-                                     upsample=upsample,
-                                     **kwargs)(residual)
+            residual = _norm_relu_conv(filters,
+                                       kernel_size=3,
+                                       upsample=upsample,
+                                       normalization=normalization,
+                                       weight_decay=weight_decay,
+                                       norm_kwargs=norm_kwargs,
+                                       init=init,
+                                       nonlinearity=nonlinearity,
+                                       ndim=ndim,
+                                       name=name)(residual)
             residuals.append(residual)
         
         if len(residuals)>1:
@@ -212,6 +251,7 @@ def basic_block(filters, subsample=False, upsample=False, skip=True,
             output = _shortcut(input, output,
                                subsample=subsample,
                                upsample=upsample,
+                               normalization=normalization,
                                weight_decay=weight_decay,
                                init=init,
                                ndim=ndim,
@@ -224,8 +264,9 @@ def basic_block(filters, subsample=False, upsample=False, skip=True,
 # Builds a residual block with repeating bottleneck blocks.
 def residual_block(block_function, filters, repetitions, num_residuals=1,
                    skip=True, dropout=0., subsample=False, upsample=False,
-                   batch_norm=True, weight_decay=None, bn_kwargs=None,
-                   init='he_normal', ndim=2, name=None):
+                   normalization=BatchNormalization, weight_decay=None,
+                   norm_kwargs=None, init='he_normal', nonlinearity='relu',
+                   ndim=2, name=None):
     def f(input):
         x = input
         for i in range(repetitions):
@@ -237,9 +278,10 @@ def residual_block(block_function, filters, repetitions, num_residuals=1,
                                    dropout=dropout,
                                    subsample=subsample_i,
                                    upsample=upsample_i,
-                                   batch_norm=batch_norm,
+                                   normalization=normalization,
+                                   norm_kwargs=norm_kwargs,
                                    weight_decay=weight_decay,
-                                   bn_kwargs=bn_kwargs,
+                                   nonlinearity=nonlinearity,
                                    init=init,
                                    ndim=ndim,
                                    name=name)(x)
@@ -250,31 +292,34 @@ def residual_block(block_function, filters, repetitions, num_residuals=1,
 
 # A single basic 3x3 convolution
 def basic_block_mp(filters, subsample=False, upsample=False, skip=True,
-                   dropout=0., batch_norm=True, weight_decay=None,
-                   num_residuals=1, bn_kwargs=None, init='he_normal',
-                   ndim=2, name=None):
-    if bn_kwargs is None:
-        bn_kwargs = {}
-    name = get_unique_name('basic_block_mp', prefix=name)
-        
+                   dropout=0., normalization=BatchNormalization,
+                   weight_decay=None, num_residuals=1, norm_kwargs=None,
+                   init='he_normal', nonlinearity='relu', ndim=2, name=None):
+    if norm_kwargs is None:
+        norm_kwargs = {}
+    name = _get_unique_name('basic_block_mp', prefix=name)
+    
     def f(input):
         residuals = []
         for i in range(num_residuals):
             residual = input
-            if batch_norm:
-                residual = BatchNormalization(axis=1,
-                                              name="bn_"+str(i)+"_"+name,
-                                              **bn_kwargs)(residual)
-            residual = Activation('relu')(residual)
+            if normalization is not None:
+                residual = normalization(name=name+"_norm_"+str(i),
+                                         **norm_kwargs)(residual)
+            residual = get_nonlinearity(nonlinearity)(residual)
             if subsample:
                 residual = MaxPooling(pool_size=2, ndim=ndim)(residual)
             residual = Convolution(filters=filters, kernel_size=3, 
-                                   ndim=ndim, kernel_initializer=init,
+                                   ndim=ndim,
+                                   kernel_initializer=init,
                                    padding='same',
                                    kernel_regularizer=_l2(weight_decay),
-                                   name="conv_"+str(i)+"_"+name)(residual)
+                                   name=name+"_conv_"+str(i))(residual)
             if dropout > 0:
-                residual = Dropout(dropout)(residual)
+                if nonlinearity=='selu':
+                    residual = AlphaDropout(dropout)(residual)
+                else:
+                    residual = Dropout(dropout)(residual)
             if upsample:
                 residual = UpSampling(size=2, ndim=ndim)(residual)
             residuals.append(residual)
@@ -286,6 +331,7 @@ def basic_block_mp(filters, subsample=False, upsample=False, skip=True,
         if skip:
             output = _shortcut(input, output,
                                subsample=subsample, upsample=upsample,
+                               normalization=normalization,
                                weight_decay=weight_decay, init=init,
                                ndim=ndim, name=name)
         return output

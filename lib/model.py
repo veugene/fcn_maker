@@ -175,7 +175,7 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
             skip_kwargs.update(block_kwargs)
             skip_kwargs['repetitions'] = 1
             concat_x = residual_block(skipblock,
-                                      nb_filter=skipblock_num_filters,
+                                      filters=skipblock_num_filters,
                                       **skip_kwargs)(concat_x)
         if long_skip_merge_mode == 'sum':
             if prev_x._keras_shape[1] != num_target_filters:
@@ -250,9 +250,9 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
     # DOWN (initial subsampling blocks)
     for b in range(0, num_init_blocks):
         depth = b+1
-        nb_filter = num_filters[1+b]
+        n_filters = num_filters[1+b]
         x = residual_block(initblock,
-                           nb_filter=nb_filter,
+                           filters=n_filters,
                            repetitions=1,
                            subsample=True,
                            name='initblock_d'+str(b),
@@ -263,9 +263,9 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
     # DOWN (main blocks)
     for b in range(0, num_main_blocks):
         depth = b+1+num_init_blocks
-        nb_filter = num_filters[1+num_init_blocks+b]
+        n_filters = num_filters[1+num_init_blocks+b]
         x = residual_block(mainblock,
-                           nb_filter=nb_filter,
+                           filters=n_filters,
                            repetitions=main_block_depth[b],
                            subsample=True,
                            name='mainblock_d'+str(b),
@@ -276,9 +276,9 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
                     "".format(b, main_block_depth[b], x._keras_shape))
         
     # ACROSS
-    nb_filter = num_filters[1+num_init_blocks+num_main_blocks]
+    n_filters = num_filters[1+num_init_blocks+num_main_blocks]
     x = residual_block(mainblock,
-                       nb_filter=nb_filter,
+                       filters=n_filters,
                        repetitions=main_block_depth[num_main_blocks],
                        subsample=True,
                        upsample=True,
@@ -291,14 +291,14 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
     # UP (main blocks)
     for b in range(num_main_blocks-1, -1, -1):
         depth = b+1+num_init_blocks
-        nb_filter = num_filters[-1-1-num_init_blocks-b]
+        n_filters = num_filters[-1-1-num_init_blocks-b]
         if long_skip:
             x = make_long_skip(prev_x=x,
                                concat_x=tensors[depth],
-                               num_target_filters=nb_filter,
+                               num_target_filters=n_filters,
                                name='concat_main_'+str(b))
         x = residual_block(mainblock,
-                           nb_filter=nb_filter,
+                           filters=n_filters,
                            repetitions=main_block_depth[-b-1],
                            upsample=True,
                            name='mainblock_u'+str(b),
@@ -310,14 +310,14 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
     # UP (final upsampling blocks)
     for b in range(num_init_blocks-1, -1, -1):
         depth = b+1
-        nb_filter = num_filters[-1-1-b]
+        n_filters = num_filters[-1-1-b]
         if long_skip:
             x = make_long_skip(prev_x=x,
                                concat_x=tensors[depth],
-                               num_target_filters=nb_filter,
+                               num_target_filters=n_filters,
                                name='concat_init_'+str(b))
         x = residual_block(initblock,
-                           nb_filter=nb_filter,
+                           filters=n_filters,
                            repetitions=1,
                            upsample=True,
                            name='initblock_u'+str(b),

@@ -52,7 +52,7 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
         These blocks always have the same number of channels as the first
         convolutional layer in the model.
     num_main_blocks : The number of blocks of type mainblock, below initblocks.
-        These blocks double (halve) in number of channels at each downsampling
+        These blocks double (halve) the number of channels at each downsampling
         (upsampling).
     main_block_depth : An integer or list of integers specifying the number of
         repetitions of each mainblock. A list must contain 2*num_main_blocks+1
@@ -103,13 +103,15 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
     
     '''
     main_block_depth can be a list per block or a single value 
-    -- ensure the list length is correct (if list) and that no length is 0
+    -- ensure the list length is correct (if list) or convert to list
     '''
     if hasattr(main_block_depth, '__len__'):
         if len(main_block_depth)!=2*num_main_blocks+1:
             raise ValueError("main_block_depth must have " 
                              "`2*num_main_blocks+1` values when " 
                              "passed as a list")
+    else:
+        main_block_depth = [main_block_depth]*(2*num_main_blocks+1)
         
     '''
     ndim must be only 2 or 3.
@@ -138,14 +140,6 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
                         'merge_mode': long_skip_merge_mode,
                         'block': skipblock}
     long_skip_kwargs.update(block_kwargs)
-    
-    '''
-    Returns the depth of a mainblock for a given pooling level
-    '''
-    def get_repetitions(level):
-        if hasattr(main_block_depth, '__len__'):
-            return main_block_depth[level]
-        return main_block_depth
     
     '''
     Function to print if verbose==True
@@ -265,25 +259,28 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
         num_filters = input_num_filters*(2**b)
         x = residual_block(mainblock,
                            nb_filter=num_filters,
-                           repetitions=get_repetitions(b),
+                           repetitions=main_block_depth[b],
                            subsample=True,
                            name='mainblock_d'+str(b),
                            **block_kwargs)(x)
-        v_print("MAIN DOWN {} (depth {}): {}".format( \
-            depth, get_repetitions(b), x._keras_shape))
+        tensors[depth] = x
+        if main_block_depth[b]!=0:
+            v_print("MAIN DOWN {} (depth {}): {}"
+                    "".format(b, main_block_depth[b], x._keras_shape))
         
     # ACROSS
     num_filters = input_num_filters*(2**num_main_blocks)
     num_filters *= relative_num_across_filters
     x = residual_block(mainblock,
                        nb_filter=num_filters, 
-                       repetitions=get_repetitions(num_main_blocks),
+                       repetitions=main_block_depth[num_main_blocks],
                        subsample=True,
                        upsample=True,
                        name='mainblock_a',
                        **block_kwargs)(x) 
-    v_print("ACROSS (depth {}): {}".format( \
-          get_repetitions(num_main_blocks), x._keras_shape))
+    if main_block_depth[num_main_blocks]!=0:
+        v_print("ACROSS (depth {}): {}"
+                "".format(main_block_depth[num_main_blocks], x._keras_shape))
 
     # UP (resnet blocks)
     for b in range(num_main_blocks-1, -1, -1):
@@ -291,7 +288,6 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
         num_filters = input_num_filters*(2**b)
         if long_skip:
             num_across_filters = num_filters*relative_num_across_filters
-            repetitions = get_repetitions(num_main_blocks)
             x = make_long_skip(prev_x=x,
                                concat_x=tensors[depth],
                                num_concat_filters=num_across_filters,
@@ -300,19 +296,19 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
                                **long_skip_kwargs)
         x = residual_block(mainblock,
                            nb_filter=num_filters,
-                           repetitions=get_repetitions(b),
+                           repetitions=main_block_depth[-b-1],
                            upsample=True,
                            name='mainblock_u'+str(b),
                            **block_kwargs)(x)
-        v_print("MAIN UP {} (depth {}): {}".format( \
-            b, get_repetitions(b), x._keras_shape))
+        if main_block_depth[-b-1]!=0:
+            v_print("MAIN UP {} (depth {}): {}"
+                    "".format(b, main_block_depth[-b-1], x._keras_shape))
         
     # UP (final upsampling blocks)
     for b in range(num_init_blocks-1, -1, -1):
         depth = b+1
         if long_skip:
             num_across_filters = input_num_filters*relative_num_across_filters
-            repetitions = get_repetitions(num_main_blocks)
             x = make_long_skip(prev_x=x,
                                concat_x=tensors[depth],
                                num_concat_filters=num_across_filters,
@@ -330,7 +326,6 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
     # Final convolution
     if long_skip:
         num_across_filters = input_num_filters*relative_num_across_filters
-        repetitions = get_repetitions(num_main_blocks)
         x = make_long_skip(prev_x=x,
                            concat_x=tensors[0],
                            num_concat_filters=num_across_filters,

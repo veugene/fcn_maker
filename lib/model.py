@@ -36,6 +36,12 @@ def _softmax(x):
     e = K.exp(x - K.max(x, axis=-1, keepdims=True))
     s = K.sum(e, axis=-1, keepdims=True)
     return e / s
+
+def _unique(name):
+    """
+    Return a unique name string.
+    """
+    return name + '_' + str(K.get_uid(name))
     
     
 def assemble_model(input_shape, num_classes, num_adapt_blocks, num_main_blocks,
@@ -196,7 +202,7 @@ def assemble_model(input_shape, num_classes, num_adapt_blocks, num_main_blocks,
                                      kernel_initializer=init,
                                      padding='valid',
                                      kernel_regularizer=_l2(weight_decay),
-                                     name=name+'_prev')(prev_x)
+                                     name=_unique(name+'_prev'))(prev_x)
             if concat_x._keras_shape[1] != num_target_filters:
                 concat_x = Convolution(filters=num_target_filters,
                                        kernel_size=1,
@@ -204,7 +210,7 @@ def assemble_model(input_shape, num_classes, num_adapt_blocks, num_main_blocks,
                                        kernel_initializer=init,
                                        padding='valid',
                                        kernel_regularizer=_l2(weight_decay),
-                                       name=name+'_concat')(concat_x)
+                                       name=_unique(name+'_concat'))(concat_x)
                 
         #def _pad_to_fit(x, target_shape):
             #"""
@@ -255,7 +261,7 @@ def assemble_model(input_shape, num_classes, num_adapt_blocks, num_main_blocks,
                     kernel_initializer=init,
                     padding='same',
                     kernel_regularizer=_l2(weight_decay),
-                    name='first_conv')(model_input)
+                    name=_unique('first_conv'))(model_input)
     tensors[0] = x
     
     # DOWN (initial subsampling blocks)
@@ -266,7 +272,7 @@ def assemble_model(input_shape, num_classes, num_adapt_blocks, num_main_blocks,
                            filters=n_filters,
                            repetitions=1,
                            subsample=True,
-                           name='initblock_d'+str(b),
+                           name=_unique('initblock_d'+str(b)),
                            **block_kwargs)(x)
         tensors[depth] = x
         v_print("ADAPT DOWN {}: {}".format(b, x._keras_shape))
@@ -279,7 +285,7 @@ def assemble_model(input_shape, num_classes, num_adapt_blocks, num_main_blocks,
                            filters=n_filters,
                            repetitions=main_block_depth[b],
                            subsample=True,
-                           name='mainblock_d'+str(b),
+                           name=_unique('mainblock_d'+str(b)),
                            **block_kwargs)(x)
         tensors[depth] = x
         if main_block_depth[b]!=0:
@@ -293,7 +299,7 @@ def assemble_model(input_shape, num_classes, num_adapt_blocks, num_main_blocks,
                        repetitions=main_block_depth[num_main_blocks],
                        subsample=True,
                        upsample=True,
-                       name='mainblock_a',
+                       name=_unique('mainblock_a'),
                        **block_kwargs)(x) 
     if main_block_depth[num_main_blocks]!=0:
         v_print("ACROSS (depth {}): {}"
@@ -307,12 +313,12 @@ def assemble_model(input_shape, num_classes, num_adapt_blocks, num_main_blocks,
             x = make_long_skip(prev_x=x,
                                concat_x=tensors[depth],
                                num_target_filters=n_filters,
-                               name='concat_main_'+str(b))
+                               name=_unique('concat_main_'+str(b)))
         x = residual_block(mainblock,
                            filters=n_filters,
                            repetitions=main_block_depth[-b-1],
                            upsample=True,
-                           name='mainblock_u'+str(b),
+                           name=_unique('mainblock_u'+str(b)),
                            **block_kwargs)(x)
         if main_block_depth[-b-1]!=0:
             v_print("MAIN UP {} (depth {}): {}"
@@ -326,12 +332,12 @@ def assemble_model(input_shape, num_classes, num_adapt_blocks, num_main_blocks,
             x = make_long_skip(prev_x=x,
                                concat_x=tensors[depth],
                                num_target_filters=n_filters,
-                               name='concat_init_'+str(b))
+                               name=_unique('concat_init_'+str(b)))
         x = residual_block(initblock,
                            filters=n_filters,
                            repetitions=1,
                            upsample=True,
-                           name='initblock_u'+str(b),
+                           name=_unique('initblock_u'+str(b)),
                            **block_kwargs)(x)
         v_print("ADAPT UP {}: {}".format(b, x._keras_shape))
         
@@ -340,14 +346,14 @@ def assemble_model(input_shape, num_classes, num_adapt_blocks, num_main_blocks,
         x = make_long_skip(prev_x=x,
                            concat_x=tensors[0],
                            num_target_filters=num_filters[-1],
-                           name='concat_top')
+                           name=_unique('concat_top'))
     x = Convolution(filters=num_filters[-1],
                     kernel_size=3,
                     ndim=ndim,
                     kernel_initializer=init,
                     padding='same',
                     kernel_regularizer=_l2(weight_decay),
-                    name='final_conv')(x)
+                    name=_unique('final_conv'))(x)
     
     if normalization is not None:
         x = normalization(**norm_kwargs)(x)

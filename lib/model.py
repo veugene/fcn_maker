@@ -15,7 +15,8 @@ from .blocks import (bottleneck,
                      basic_block,
                      basic_block_mp,
                      residual_block,
-                     Convolution)
+                     Convolution,
+                     get_nonlinearity)
 
 
 def _l2(decay):
@@ -40,10 +41,11 @@ def _softmax(x):
 def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
                    main_block_depth, num_filters, short_skip=True,
                    long_skip=True, long_skip_merge_mode='concat',
-                   mainblock=None, initblock=None, skipblock_num_filters=None,
-                   skipblock=None, num_residuals=1, dropout=0., 
+                   mainblock=None, initblock=None, skipblock=None,
+                   skipblock_num_filters=None, num_residuals=1, dropout=0.,
+                   normalization=BatchNormalization, norm_kwargs=None,
                    weight_decay=None, init='he_normal', batch_norm=True, 
-                   bn_kwargs=None, ndim=2, verbose=True):
+                   nonlinearity='relu', ndim=2, verbose=True):
     """
     input_shape : A tuple specifiying the 2D image input shape.
     num_classes : The number of classes in the segmentation output.
@@ -81,12 +83,14 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
     num_residuals : The number of parallel residual functions per block.
     dropout : A float [0, 1] specifying the dropout probability, introduced in
         every block.
+    normalization : the normalization to apply to layers (by default: batch
+        normalization). If None, no normalization is applied.
+    norm_kwargs : keyword arguments to pass to batch norm layers. For batch
+        normalization, default momentum is 0.9.
     weight_decay : The weight decay (L2 penalty) used in every convolution 
         (float).
     init : A string specifying (or a function defining) the initializer for
         layers.
-    batch_norm : A boolean to enable or disable batch normalization.
-    bn_kwargs : Keyword arguments for keras batch normalization.
     num_outputs : The number of model outputs, each with num_classifier
         classifiers.
     ndim : The spatial dimensionality of the input and output (either 2 or 3).
@@ -139,21 +143,30 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
         raise ValueError("ndim must be either 2 or 3")
             
     '''
+    If BatchNormalization is used and norm_kwargs is not set, set default
+    kwargs.
+    '''
+    if norm_kwargs is None:
+        if normalization == BatchNormalization:
+            norm_kwargs = {'momentum': 0.9,
+                           'scale': True,
+                           'center': True,
+                           'axis': 1}
+        else:
+            norm_kwargs = {}
+            
+    '''
     Constant kwargs passed to the init and main blocks.
     '''
     block_kwargs = {'skip': short_skip,
                     'dropout': dropout,
-                    'batch_norm': batch_norm,
                     'weight_decay': weight_decay,
                     'num_residuals': num_residuals,
-                    'bn_kwargs': bn_kwargs,
+                    'normalization': normalization,
+                    'norm_kwargs': norm_kwargs,
+                    'nonlinearity': nonlinearity,
                     'init': init,
                     'ndim': ndim}
-    
-    '''
-    If long skip is not (the defualt) identity, always pass these
-    parameters to make_long_skip
-    '''
     
     '''
     Function to print if verbose==True
@@ -338,11 +351,9 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
                     kernel_regularizer=_l2(weight_decay),
                     name='final_conv')(x)
     
-    if batch_norm:
-        if bn_kwargs is None:
-            bn_kwargs = {}
-        x = BatchNormalization(axis=1, name='final_bn', **bn_kwargs)(x)
-    x = Activation('relu')(x)
+    if normalization is not None:
+        x = normalization(**norm_kwargs)(x)
+    x = get_nonlinearity(nonlinearity)(x)
     
     # OUTPUT (SOFTMAX)
     if num_classes is not None:

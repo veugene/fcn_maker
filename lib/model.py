@@ -4,9 +4,9 @@ from keras.layers import (Input,
                           Dense,
                           Permute,
                           Lambda,
-                          merge)
+                          add,
+                          concatenate)
 from keras.layers.normalization import BatchNormalization
-from keras.layers.convolutional import Convolution2D
 from keras import backend as K
 from theano import tensor as T
 from keras.regularizers import l2
@@ -14,7 +14,8 @@ import numpy as np
 from .blocks import (bottleneck,
                      basic_block,
                      basic_block_mp,
-                     residual_block)
+                     residual_block,
+                     Convolution)
 
 
 def _l2(decay):
@@ -42,7 +43,7 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
                    mainblock=None, initblock=None, use_skip_blocks=True,
                    skipblock=None, relative_num_across_filters=1,
                    num_residuals=1, dropout=0., weight_decay=None, 
-                   init='he_normal', batch_norm=True,  bn_kwargs=None,
+                   init='he_normal', batch_norm=True,  bn_kwargs=None, ndim=2,
                    verbose=True):
     """
     input_shape : A tuple specifiying the 2D image input shape.
@@ -85,6 +86,7 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
     bn_kwargs : Keyword arguments for keras batch normalization.
     num_outputs : The number of model outputs, each with num_classifier
         classifiers.
+    ndim : The spatial dimensionality of the input and output (either 2 or 3).
     verbose : A boolean specifying whether to print messages about model   
         structure during construction (if True).
     """
@@ -108,6 +110,12 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
             raise ValueError("main_block_depth must have " 
                              "`2*num_main_blocks+1` values when " 
                              "passed as a list")
+        
+    '''
+    ndim must be only 2 or 3.
+    '''
+    if ndim not in [2, 3]:
+        raise ValueError("ndim must be either 2 or 3")
             
     '''
     Constant kwargs passed to the init and main blocks.
@@ -118,7 +126,8 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
                     'weight_decay': weight_decay,
                     'num_residuals': num_residuals,
                     'bn_kwargs': bn_kwargs,
-                    'init': init}
+                    'init': init,
+                    'ndim': ndim}
     
     '''
     If long skip is not (the defualt) identity, always pass these
@@ -151,13 +160,13 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
     Helper function to create a long skip connection with concatenation.
     Concatenated information is not transformed if use_skip_blocks is False.
     '''
-    def make_long_skip(prev_layer, concat_layer, num_concat_filters, bn_kwargs,
+    def make_long_skip(prev_x, concat_x, num_concat_filters, bn_kwargs,
                        num_target_filters, use_skip_blocks, repetitions,
                        dropout, skip, batch_norm, weight_decay, num_residuals,
                        merge_mode='concat', block=bottleneck):
     
         if use_skip_blocks:
-            concat_layer = residual_block( \
+            concat_x = residual_block( \
                                        block,
                                        nb_filter=num_concat_filters,
                                        repetitions=repetitions,
@@ -165,19 +174,24 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
                                        skip=skip,
                                        batch_norm=batch_norm,
                                        bn_kwargs=bn_kwargs,
-                                       weight_decay=weight_decay)(concat_layer)
+                                       weight_decay=weight_decay)(concat_x)
         if merge_mode == 'sum':
-            if prev_layer._keras_shape[1] != num_target_filters:
-                prev_layer = Convolution2D( \
-                                 num_target_filters, 1, 1,
-                                 init=init,
-                                 border_mode='valid',
-                                 W_regularizer=_l2(weight_decay))(prev_layer)
-            if concat_layer._keras_shape[1] != num_target_filters:
-                concat_layer = Convolution2D(\
-                                 num_target_filters, 1, 1,
-                                 init=init, border_mode='valid',
-                                 W_regularizer=_l2(weight_decay))(concat_layer)
+            if prev_x._keras_shape[1] != num_target_filters:
+                prev_x = Convolution( \
+                                filters=num_target_filters,
+                                kernel_size=1,
+                                ndim=ndim,
+                                kernel_initializer=init,
+                                padding='valid',
+                                kernel_regularizer=_l2(weight_decay))(prev_x)
+            if concat_x._keras_shape[1] != num_target_filters:
+                concat_x = Convolution(\
+                                filters=num_target_filters,
+                                kernel_size=1,
+                                ndim=ndim,
+                                kernel_initializer=init,
+                                padding='valid',
+                                kernel_regularizer=_l2(weight_decay))(concat_x)
                 
         #def _pad_to_fit(x, target_shape):
             #"""
@@ -202,12 +216,17 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
                     #slice(pad_0[3], target_shape[3]-pad_1[3]))
             #return T.set_subtensor(output[indices], x)
         #zero_pad = Lambda(_pad_to_fit,
-                          #output_shape=concat_layer._keras_shape[1:],
-                          #arguments={'target_shape': concat_layer.shape})
-        #prev_layer = zero_pad(prev_layer)
+                          #output_shape=concat_x._keras_shape[1:],
+                          #arguments={'target_shape': concat_x.shape})
+        #prev_x = zero_pad(prev_x)
         
-        merged = merge([prev_layer, concat_layer],
-                       mode=merge_mode, concat_axis=1)
+        if merge_mode=='sum':
+            merged = add([prev_x, concat_x])
+        elif merge_mode=='concat':
+            merged = concatenate([prev_x, concat_x], concat_axis=1)
+        else:
+            raise ValueError("Unrecognized merge mode: {}"
+                             "".format(merge_mode))
         return merged
     
     '''
@@ -217,11 +236,12 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
     model_input = Input(shape=input_shape)
     
     # Initial convolution
-    x = Convolution2D(input_num_filters, 3, 3,
-                      init=init,
-                      border_mode='same',
-                      W_regularizer=_l2(weight_decay),
-                      name='first_conv')(model_input)
+    x = Convolution(filters=input_num_filters,
+                    kernel_size=3,
+                    ndim=ndim,
+                    kernel_initializer=init,
+                    padding='same',
+                    kernel_regularizer=_l2(weight_decay))(model_input)
     tensors[0] = x
     
     # DOWN (initial subsampling blocks)
@@ -231,7 +251,6 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
                            nb_filter=nb_filter,
                            repetitions=1,
                            subsample=True,
-                           name='initblock_d'+str(b),
                            **block_kwargs)(x)
         tensors[depth] = x
         v_print("INIT DOWN {}: {}".format(b, x._keras_shape))
@@ -244,7 +263,6 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
                            nb_filter=num_filters,
                            repetitions=get_repetitions(b),
                            subsample=True,
-                           name='mainblock_d'+str(b),
                            **block_kwargs)(x)
         v_print("MAIN DOWN {} (depth {}): {}".format( \
             depth, get_repetitions(b), x._keras_shape))
@@ -257,7 +275,6 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
                        repetitions=get_repetitions(num_main_blocks),
                        subsample=True,
                        upsample=True,
-                       name='mainblock_a',
                        **block_kwargs)(x) 
     v_print("ACROSS (depth {}): {}".format( \
           get_repetitions(num_main_blocks), x._keras_shape))
@@ -269,17 +286,15 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
         if long_skip:
             num_across_filters = num_filters*relative_num_across_filters
             repetitions = get_repetitions(num_main_blocks)
-            x = make_long_skip(prev_layer=x,
-                                concat_layer=tensors[depth],
-                                num_concat_filters=num_across_filters,
-                                num_target_filters=num_filters,
-                                name='concat_main_'+str(b),
-                                **long_skip_kwargs)
+            x = make_long_skip(prev_x=x,
+                               concat_x=tensors[depth],
+                               num_concat_filters=num_across_filters,
+                               num_target_filters=num_filters,
+                               **long_skip_kwargs)
         x = residual_block(mainblock,
                            nb_filter=num_filters,
                            repetitions=get_repetitions(b),
                            upsample=True,
-                           name='mainblock_u'+str(b),
                            **block_kwargs)(x)
         v_print("MAIN UP {} (depth {}): {}".format( \
             b, get_repetitions(b), x._keras_shape))
@@ -290,17 +305,15 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
         if long_skip:
             num_across_filters = input_num_filters*relative_num_across_filters
             repetitions = get_repetitions(num_main_blocks)
-            x = make_long_skip(prev_layer=x,
-                                concat_layer=tensors[depth],
-                                num_concat_filters=num_across_filters,
-                                num_target_filters=input_num_filters,
-                                name='concat_init_'+str(b),
-                                **long_skip_kwargs)
+            x = make_long_skip(prev_x=x,
+                               concat_x=tensors[depth],
+                               num_concat_filters=num_across_filters,
+                               num_target_filters=input_num_filters,
+                               **long_skip_kwargs)
         x = residual_block(initblock,
                            nb_filter=nb_filter,
                            repetitions=1,
                            upsample=True,
-                           name='initblock_u'+str(b),
                            **block_kwargs)(x)
         v_print("INIT UP {}: {}".format(b, x._keras_shape))
         
@@ -308,21 +321,22 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
     if long_skip:
         num_across_filters = input_num_filters*relative_num_across_filters
         repetitions = get_repetitions(num_main_blocks)
-        x = make_long_skip(prev_layer=x,
-                            concat_layer=tensors[0],
-                            num_concat_filters=num_across_filters,
-                            num_target_filters=input_num_filters,
-                            name='concat_top',
-                            **long_skip_kwargs)
-    x = Convolution2D(input_num_filters, 3, 3,
-                      init=init, border_mode='same',
-                      W_regularizer=_l2(weight_decay),
-                      name='final_conv')(x)
+        x = make_long_skip(prev_x=x,
+                           concat_x=tensors[0],
+                           num_concat_filters=num_across_filters,
+                           num_target_filters=input_num_filters,
+                           **long_skip_kwargs)
+    x = Convolution(filters=input_num_filters,
+                    kernel_size=3,
+                    ndim=ndim,
+                    kernel_initializer=init,
+                    padding='same',
+                    kernel_regularizer=_l2(weight_decay))(x)
     
     if batch_norm:
         if bn_kwargs is None:
             bn_kwargs = {}
-        x = BatchNormalization(axis=1, name='final_bn', **bn_kwargs)(x)
+        x = BatchNormalization(axis=1, **bn_kwargs)(x)
     x = Activation('relu')(x)
     
     # OUTPUT (SOFTMAX)
@@ -330,10 +344,11 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
         all_outputs = []
         for i in range(num_outputs):
             # Linear classifier
-            output = Convolution2D(num_classes,1,1,
-                                   activation='linear', 
-                                   W_regularizer=_l2(weight_decay),
-                                   name='sm_1')(x)
+            output = Convolution(filters=num_classes,
+                                 kernel_size=1,
+                                 ndim=ndim
+                                 activation='linear',
+                                 kernel_regularizer=_l2(weight_decay))(x)
             output = Permute((2,3,1))(output)
             if num_classes==1:
                 output = Activation('sigmoid')(output)
@@ -346,6 +361,6 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
         all_outputs = x
     
     # MODEL
-    model = Model(input=model_input, output=all_outputs)
+    model = Model(inputs=model_input, outputs=output)
 
     return model

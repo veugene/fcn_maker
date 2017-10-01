@@ -176,10 +176,10 @@ if training:
 
     # Prepare data augmentation
     datagen = ImageDataGenerator(rotation_range=25,
-                                shear_range=0.41,
-                                horizontal_flip=True,
-                                vertical_flip=True,
-                                fill_mode='reflect')
+                                 shear_range=0.41,
+                                 horizontal_flip=True,
+                                 vertical_flip=True,
+                                 fill_mode='reflect')
 
                                 
     # Callbacks
@@ -191,8 +191,8 @@ if training:
                                    verbose=1, save_best_only=True)
     callbacks.append(checkpointer)
     logger = FileLogger(log_file_path=os.path.join(results_dir, 
-                                                  "training_log_" +
-                                                  str(experiment_ID) + ".txt"))
+                                                   "training_log_" +
+                                                   str(experiment_ID) + ".txt"))
     callbacks.append(logger)
     if P['lr_schedule']:
         change_lr = LearningRateScheduler(scheduler)
@@ -208,8 +208,8 @@ if training:
                                                Y_train, 
                                                batch_size=P['batch_size'], 
                                                shuffle=True),
-                                  samples_per_epoch=len(X_train), 
-                                  nb_epoch=P['nb_epoch'],
+                                  steps_per_epoch=len(X_train)//batch_size, 
+                                  epochs=P['nb_epoch'],
                                   callbacks=callbacks,
                                   validation_data=(X_val, Y_val),
                                   verbose=2)

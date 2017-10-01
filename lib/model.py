@@ -91,8 +91,6 @@ def assemble_model(input_shape, num_classes, num_adapt_blocks, num_main_blocks,
         (float).
     init : A string specifying (or a function defining) the initializer for
         layers.
-    num_outputs : The number of model outputs, each with num_classifier
-        classifiers.
     ndim : The spatial dimensionality of the input and output (either 2 or 3).
     verbose : A boolean specifying whether to print messages about model   
         structure during construction (if True).
@@ -357,25 +355,30 @@ def assemble_model(input_shape, num_classes, num_adapt_blocks, num_main_blocks,
     
     # OUTPUT (SOFTMAX)
     if num_classes is not None:
-        all_outputs = []
-        for i in range(num_outputs):
-            # Linear classifier
-            output = Convolution(filters=num_classes,
-                                 kernel_size=1,
-                                 ndim=ndim
-                                 activation='linear',
-                                 kernel_regularizer=_l2(weight_decay),
-                                 name='logit_conv')(x)
+        # Linear classifier
+        output = Convolution(filters=num_classes,
+                             kernel_size=1,
+                             ndim=ndim,
+                             activation='linear',
+                             kernel_regularizer=_l2(weight_decay),
+                             name=_unique('classifier_conv'))(x)
+        if ndim==2:
             output = Permute((2,3,1))(output)
-            if num_classes==1:
-                output = Activation('sigmoid')(output)
-            else:
-                output = Activation(_softmax)(output)
-            output = Permute((3,1,2))(output)
-            all_outputs.append(output)
+        else:
+            output = Permute((2,3,4,1))(output)
+        if num_classes==1:
+            output = Activation('sigmoid')(output)
+        else:
+            output = Activation(_softmax)(output)
+        if ndim==2:
+            output_layer = Permute((3,1,2))
+        else:
+            output_layer = Permute((4,1,2,3))
+            output_layer.name = _unique('output')
+        output = Permute((3,1,2))(output)
     else:
         # No classifier
-        all_outputs = x
+        output = x
     
     # MODEL
     model = Model(inputs=model_input, outputs=output)

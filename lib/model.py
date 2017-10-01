@@ -113,41 +113,50 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
                    mainblock=None, initblock=None, use_skip_blocks=True,
                    skipblock=None, relative_num_across_filters=1,
                    num_residuals=1, dropout=0., weight_decay=None, 
-                   init='he_normal', batch_norm=True,  bn_kwargs=None):
+                   init='he_normal', batch_norm=True,  bn_kwargs=None,
+                   verbose=True):
     """
-    input_shape : tuple specifiying the 2D image input shape.
-    num_classes : number of classes in the segmentation output.
-    num_init_blocks : the number of blocks of type initblock, above mainblocks.
+    input_shape : A tuple specifiying the 2D image input shape.
+    num_classes : The number of classes in the segmentation output.
+    num_init_blocks : The number of blocks of type initblock, above mainblocks.
         These blocks always have the same number of channels as the first
         convolutional layer in the model.
-    num_main_blocks : the number of blocks of type mainblock, below initblocks.
+    num_main_blocks : The number of blocks of type mainblock, below initblocks.
         These blocks double (halve) in number of channels at each downsampling
         (upsampling).
-    main_block_depth : an integer or list of integers specifying the number of
+    main_block_depth : An integer or list of integers specifying the number of
         repetitions of each mainblock. A list must contain as many values as
         there are main_blocks in the downward (or upward -- it's mirrored) path
         plus one for the across path.
-    input_num_filters : the number channels in the first (last) convolutional
+    input_num_filters : The number channels in the first (last) convolutional
         layer in the model (and of each initblock).
-    short_skip : ResNet-like shortcut connections from the input of each block
-        to its output. The inputs are summed with the outputs.
-    long_skip : UNet-like skip connections from the downward path to the upward
-        path. These can either concatenate or sum features across.
+    short_skip : A boolean specifying whether to use ResNet-like shortcut
+        connections from the input of each block to its output. The inputs are
+        summed with the outputs.
+    long_skip : A boolean specifying whether to use UNet-like skip connections
+        from the downward path to the upward path. These can either concatenate
+        or sum features across.
     long_skip_merge_mode : Either 'concat' or 'sum' features across long_skip.
-    mainblock : a layer defining the mainblock (bottleneck by default).
-    initblock : a layer defining the initblock (basic_block_mp by default).
-    use_skip_blocks : pass features skipped along long_skip through skipblocks.
-    skipblock : a layer defining the skipblock (basic_block_mp by default).
-    relative_num_across_filters : multiply the number of channels in the across
-        path (and in each skipblock, if they exist) by this value.
-    num_residuals : the number of parallel residual functions per block.
-    dropout : the dropout probability, introduced in every block.
-    weight_decay : the weight decay (L2 penalty) used in every convolution.
-    init : string or function specifying the initializer for layers.
-    batch_norm : enable or disable batch normalization.
-    bn_kwargs : keyword arguments for keras batch normalization.
-    num_outputs : the number of model outputs, each with num_classifier
+    mainblock : A layer defining the mainblock (bottleneck by default).
+    initblock : A layer defining the initblock (basic_block_mp by default).
+    use_skip_blocks : A boolean specifying whether to pass features skipped
+        along long_skip through skipblocks.
+    skipblock : A layer defining the skipblock (basic_block_mp by default).
+    relative_num_across_filters : Multiply the number of channels in the across
+        path (and in each skipblock, if they exist) by this integer value.
+    num_residuals : The number of parallel residual functions per block.
+    dropout : A float [0, 1] specifying the dropout probability, introduced in
+        every block.
+    weight_decay : The weight decay (L2 penalty) used in every convolution 
+        (float).
+    init : A string specifying (or a function defining) the initializer for
+        layers.
+    batch_norm : A boolean to enable or disable batch normalization.
+    bn_kwargs : Keyword arguments for keras batch normalization.
+    num_outputs : The number of model outputs, each with num_classifier
         classifiers.
+    verbose : A boolean specifying whether to print messages about model   
+        structure during construction (if True).
     """
     
     '''
@@ -185,6 +194,15 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
         return main_block_depth
     
     '''
+    Function to print if verbose==True
+    '''
+    def v_print(*args, **kwargs):
+        if verbose:
+            print(*args, **kwargs)
+        else:
+            return None
+    
+    '''
     Constant kwargs passed to the init and main blocks.
     '''
     block_kwargs = {'skip': short_skip,
@@ -205,126 +223,141 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
                         'block': skipblock}
     long_skip_kwargs.update(block_kwargs)
     
-    layers = _layer_tracker()
-    
-    # INPUT
-    input = Input(shape=input_shape)
+    '''
+    Build all the blocks on the contracting and expanding paths.
+    '''
+    tensors = {}
+    model_input = Input(shape=input_shape)
     
     # Initial convolution
-    layers.record(Convolution2D(input_num_filters, 3, 3,
-                               init=init, border_mode='same',
-                               W_regularizer=_l2(weight_decay))(input),
-                  name='first_conv')
+    x = Convolution2D(input_num_filters, 3, 3,
+                      init=init,
+                      border_mode='same',
+                      W_regularizer=_l2(weight_decay),
+                      name='first_conv')(model_input)
+    tensors[0] = x
     
     # DOWN (initial subsampling blocks)
-    for b in range(num_init_blocks):
-        layers.record(initblock(input_num_filters, subsample=True,
-                                **block_kwargs)(layers.prev_layer),
-                      name='initblock_d'+str(b))
-        print("INIT DOWN {}: {} -- {}".format(b, layers.prev_layer.name,
-                                              layers.prev_layer._keras_shape))
+    for b in range(0, num_init_blocks):
+        depth = b+1
+        x = residual_block(initblock,
+                           nb_filter=nb_filter,
+                           repetitions=1,
+                           subsample=True,
+                           name='initblock_d'+str(b),
+                           **block_kwargs)(x)
+        tensors[depth] = x
+        v_print("INIT DOWN {}: {}".format(b, x._keras_shape))
     
     # DOWN (resnet blocks)
-    for b in range(num_main_blocks):
+    for b in range(0, num_main_blocks):
+        depth = b+1+num_init_blocks
         num_filters = input_num_filters*(2**b)
-        layers.record(residual_block(mainblock, nb_filter=num_filters, 
-                              repetitions=get_repetitions(b), subsample=True,
-                              **block_kwargs)(layers.prev_layer),
-                      name='mainblock_d'+str(b))
-        print("MAIN DOWN {}: {} (depth {}) -- {}".format(b,
-              layers.prev_layer.name, get_repetitions(b),
-              layers.prev_layer._keras_shape))
+        x = residual_block(mainblock,
+                           nb_filter=num_filters,
+                           repetitions=get_repetitions(b),
+                           subsample=True,
+                           name='mainblock_d'+str(b),
+                           **block_kwargs)(x)
+        v_print("MAIN DOWN {} (depth {}): {}".format( \
+            depth, get_repetitions(b), x._keras_shape))
         
     # ACROSS
     num_filters = input_num_filters*(2**num_main_blocks)
     num_filters *= relative_num_across_filters
-    layers.record(residual_block(mainblock, nb_filter=num_filters, 
-                                 repetitions=get_repetitions(num_main_blocks),
-                                 subsample=True, upsample=True,
-                                 **block_kwargs)(layers.prev_layer), 
-                  name='mainblock_a')
-    print("ACROSS: {} (depth {}) -- {}".format( \
-          layers.prev_layer.name, get_repetitions(num_main_blocks),
-          layers.prev_layer._keras_shape))
+    x = residual_block(mainblock,
+                       nb_filter=num_filters, 
+                       repetitions=get_repetitions(num_main_blocks),
+                       subsample=True,
+                       upsample=True,
+                       name='mainblock_a',
+                       **block_kwargs)(x) 
+    v_print("ACROSS (depth {}): {}".format( \
+          get_repetitions(num_main_blocks), x._keras_shape))
 
     # UP (resnet blocks)
     for b in range(num_main_blocks-1, -1, -1):
+        depth = b+1+num_init_blocks
         num_filters = input_num_filters*(2**b)
         if long_skip:
             num_across_filters = num_filters*relative_num_across_filters
             repetitions = get_repetitions(num_main_blocks)
-            layers.record(_make_long_skip(prev_layer=layers.prev_layer,
-                                     concat_layer=layers['mainblock_d'+str(b)],
-                                     num_concat_filters=num_across_filters,
-                                     num_target_filters=num_filters,
-                                     **long_skip_kwargs),
-                          name='concat_main_'+str(b))
-        layers.record(residual_block(mainblock, nb_filter=num_filters, 
-                               repetitions=get_repetitions(b), upsample=True,
-                               **block_kwargs)(layers.prev_layer),
-                      name='mainblock_u'+str(b))
-        print("MAIN UP {}: {} (depth {}) -- {}".format(b,
-              layers.prev_layer.name, get_repetitions(b),
-              layers.prev_layer._keras_shape))
+            x = _make_long_skip(prev_layer=x,
+                                concat_layer=tensors[depth],
+                                num_concat_filters=num_across_filters,
+                                num_target_filters=num_filters,
+                                name='concat_main_'+str(b),
+                                **long_skip_kwargs)
+        x = residual_block(mainblock,
+                           nb_filter=num_filters,
+                           repetitions=get_repetitions(b),
+                           upsample=True,
+                           name='mainblock_u'+str(b),
+                           **block_kwargs)(x)
+        v_print("MAIN UP {} (depth {}): {}".format( \
+            b, get_repetitions(b), x._keras_shape))
         
     # UP (final upsampling blocks)
     for b in range(num_init_blocks-1, -1, -1):
+        depth = b+1
         if long_skip:
             num_across_filters = input_num_filters*relative_num_across_filters
             repetitions = get_repetitions(num_main_blocks)
-            layers.record(_make_long_skip(prev_layer=layers.prev_layer,
-                                     concat_layer=layers['initblock_d'+str(b)],
-                                     num_concat_filters=num_across_filters,
-                                     num_target_filters=input_num_filters,
-                                     **long_skip_kwargs),
-                          name='concat_init_'+str(b))  
-        layers.record(initblock(input_num_filters, upsample=True,
-                                **block_kwargs)(layers.prev_layer),
-                      name='initblock_u'+str(b))
-        print("INIT UP {}: {} -- {}".format(b,
-              layers.prev_layer.name, layers.prev_layer._keras_shape))
+            x = _make_long_skip(prev_layer=x,
+                                concat_layer=tensors[depth],
+                                num_concat_filters=num_across_filters,
+                                num_target_filters=input_num_filters,
+                                name='concat_init_'+str(b),
+                                **long_skip_kwargs)
+        x = residual_block(initblock,
+                           nb_filter=nb_filter,
+                           repetitions=1,
+                           upsample=True,
+                           name='initblock_u'+str(b),
+                           **block_kwargs)(x)
+        v_print("INIT UP {}: {}".format(b, x._keras_shape))
         
     # Final convolution
-    layers.record(Convolution2D(input_num_filters, 3, 3,
-                               init=init, border_mode='same',
-                               W_regularizer=_l2(weight_decay))(layers.prev_layer),
-                  name='final_conv')
+    x = Convolution2D(input_num_filters, 3, 3,
+                      init=init, border_mode='same',
+                      W_regularizer=_l2(weight_decay),
+                      name='final_conv')(x)
     if long_skip:
         num_across_filters = input_num_filters*relative_num_across_filters
         repetitions = get_repetitions(num_main_blocks)
-        layers.record(_make_long_skip(prev_layer=layers.prev_layer,
-                                     concat_layer=layers['first_conv'],
-                                     num_concat_filters=num_across_filters,
-                                     num_target_filters=input_num_filters,
-                                     **long_skip_kwargs),
-                      name='concat_top')
+        x = _make_long_skip(prev_layer=x,
+                            concat_layer=tensors[0],
+                            num_concat_filters=num_across_filters,
+                            num_target_filters=input_num_filters,
+                            name='concat_top',
+                            **long_skip_kwargs)
     if batch_norm:
         if bn_kwargs is None:
             bn_kwargs = {}
-        layers.record(BatchNormalization(axis=1,
-                                         **bn_kwargs)(layers.prev_layer),
-                      name='final_bn')
-    layers.record(Activation('relu')(layers.prev_layer), name='final_relu')
+        x = BatchNormalization(axis=1, name='final_bn', **bn_kwargs)(x)
+    x = Activation('relu')(x)
     
     # OUTPUT (SOFTMAX)
     if num_classes is not None:
         all_outputs = []
         for i in range(num_outputs):
             # Linear classifier
-            layers.record(Convolution2D(num_classes,1,1,activation='linear', 
-                    W_regularizer=_l2(weight_decay))(layers.prev_layer), name='sm_1')
-            layers.record(Permute((2,3,1))(layers.prev_layer), name='sm_2')
+            output = Convolution2D(num_classes,1,1,
+                                   activation='linear', 
+                                   W_regularizer=_l2(weight_decay),
+                                   name='sm_1')(x)
+            output = Permute((2,3,1))(output)
             if num_classes==1:
-                output = Activation('sigmoid')(layers.prev_layer)
+                output = Activation('sigmoid')(output)
             else:
-                output = Activation(_softmax)(layers.prev_layer)
+                output = Activation(_softmax)(output)
             output = Permute((3,1,2))(output)
             all_outputs.append(output)
     else:
         # No classifier
-        all_outputs = layers.prev_layer
+        all_outputs = x
     
     # MODEL
-    model = Model(input=input, output=all_outputs)
+    model = Model(input=model_input, output=all_outputs)
 
     return model

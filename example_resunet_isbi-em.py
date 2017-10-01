@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import tifffile as tf
 import os
-from lib.fcn import assemble_model
+from lib.model import assemble_model
 from lib.loss import dice_loss
 from lib.blocks import (basic_block_mp,
                         basic_block,
@@ -33,19 +33,19 @@ sys.setrecursionlimit(99999)
 model_kwargs = OrderedDict((
     ('input_shape', (1, 512, 512)),
     ('num_classes', 1),
-    ('input_num_filters', 16),
-    ('main_block_depth', [3, 8, 10, 3]),
+    ('num_filters', 16),
+    ('main_block_depth', [3, 8, 10, 3, 10, 8, 3]),
     ('num_main_blocks', 3),
-    ('num_init_blocks', 1),
+    ('num_adapt_blocks', 2),
+    ('skipblock_num_filters', None),
     ('weight_decay', 0.0001), 
     ('dropout', 0.1),
     ('short_skip', True),
     ('long_skip', True),
     ('long_skip_merge_mode', 'sum'),
-    ('use_skip_blocks', False),
-    ('relative_num_across_filters', 1),
     ('mainblock', bottleneck),
-    ('initblock', basic_block_mp)
+    ('initblock', basic_block_mp),
+    ('nonlinearity', 'relu')
     ))
 P = OrderedDict((
     ('n_train', 26),
@@ -53,7 +53,7 @@ P = OrderedDict((
     ('nb_epoch', 500),
     ('lr_schedule', False),
     ('early_stopping', False),
-    ('initial_lr', 0.001),
+    ('initial_lr', 0.0001),
     ('optimizer_type', 'RMSprop'), # 'RMSprop' or 'SGD'
     ))
 training = True
@@ -118,7 +118,7 @@ if training:
             sys.exit()
         if write_into=='r':
             shutil.rmtree(results_dir)
-            print("WARNING: Deleting existing results directory.")
+            print("\nWARNING: Deleting existing results directory.")
         print("")
     if not os.path.exists(results_dir):
         os.makedirs(results_dir)
@@ -133,7 +133,7 @@ if training:
     # Invert labels (if dice loss)
     if model_kwargs['num_classes']==1:
         Y = 1-Y
-
+    
     # Standardize the data
     mean = X.reshape(X.shape[0],
                      np.prod(X.shape[1:])).mean(axis=-1)[:,None,None]
@@ -208,7 +208,7 @@ if training:
                                                Y_train, 
                                                batch_size=P['batch_size'], 
                                                shuffle=True),
-                                  steps_per_epoch=len(X_train)//batch_size, 
+                                  steps_per_epoch=len(X_train)//P['batch_size'], 
                                   epochs=P['nb_epoch'],
                                   callbacks=callbacks,
                                   validation_data=(X_val, Y_val),

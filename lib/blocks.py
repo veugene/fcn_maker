@@ -53,7 +53,9 @@ def get_nonlinearity(nonlin):
     return nonlin()
 
 
-# Return a new instance of l2 regularizer, or return None
+"""
+Return a new instance of l2 regularizer, or return None.
+"""
 def _l2(decay):
     if decay is not None:
         return l2(decay)
@@ -61,7 +63,9 @@ def _l2(decay):
         return None
     
 
-# Add a unique identifier to a name string.
+"""
+Add a unique identifier to a name string.
+"""
 def _get_unique_name(name, prefix=None):
     if prefix is not None:
         name = prefix + '_' + name
@@ -69,8 +73,10 @@ def _get_unique_name(name, prefix=None):
     return name
 
 
-# Helper to build a norm -> relu -> conv block
-# This is an improved scheme proposed in http://arxiv.org/pdf/1603.05027v2.pdf
+"""
+Helper to build a norm -> relu -> conv block
+This is an improved scheme proposed in http://arxiv.org/pdf/1603.05027v2.pdf
+"""
 def _norm_relu_conv(filters, kernel_size, subsample=False, upsample=False,
                     nonlinearity='relu', normalization=BatchNormalization,
                     weight_decay=None,  norm_kwargs=None, init='he_normal',
@@ -175,9 +181,11 @@ def _shortcut(input, residual, subsample, upsample, normalization=None,
     return out
 
 
-# Bottleneck architecture for > 34 layer resnet.
-# Follows improved proposed scheme in http://arxiv.org/pdf/1603.05027v2.pdf
-# Returns a final conv layer of filters * 4
+"""
+Bottleneck architecture for > 34 layer resnet.
+Follows improved proposed scheme in http://arxiv.org/pdf/1603.05027v2.pdf
+Returns a final conv layer of filters * 4
+"""
 def bottleneck(filters, subsample=False, upsample=False, skip=True,
                dropout=0., normalization=BatchNormalization, weight_decay=None,
                num_residuals=1, norm_kwargs=None, init='he_normal', 
@@ -237,9 +245,11 @@ def bottleneck(filters, subsample=False, upsample=False, skip=True,
     return f
 
 
-# Basic 3 X 3 convolution blocks.
-# Use for resnet with layers <= 34
-# Follows improved proposed scheme in http://arxiv.org/pdf/1603.05027v2.pdf
+"""
+Basic 3 X 3 convolution blocks.
+Use for resnet with layers <= 34
+Follows improved proposed scheme in http://arxiv.org/pdf/1603.05027v2.pdf
+"""
 def basic_block(filters, subsample=False, upsample=False, skip=True,
                 dropout=0., normalization=BatchNormalization, 
                 weight_decay=None, num_residuals=1, norm_kwargs=None,
@@ -290,7 +300,9 @@ def basic_block(filters, subsample=False, upsample=False, skip=True,
     return f
 
 
-# Builds a residual block with repeating bottleneck blocks.
+"""
+Builds a residual block with repeating bottleneck blocks.
+"""
 def residual_block(block_function, filters, repetitions, num_residuals=1,
                    skip=True, dropout=0., subsample=False, upsample=False,
                    normalization=BatchNormalization, weight_decay=None,
@@ -319,7 +331,9 @@ def residual_block(block_function, filters, repetitions, num_residuals=1,
     return f 
 
 
-# A single basic 3x3 convolution
+"""
+A single basic 3x3 convolution.
+"""
 def basic_block_mp(filters, subsample=False, upsample=False, skip=True,
                    dropout=0., normalization=BatchNormalization,
                    weight_decay=None, num_residuals=1, norm_kwargs=None,

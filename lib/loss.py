@@ -1,73 +1,109 @@
 from keras import backend as K
-from theano import tensor as T
 import numpy as np
 
-def categorical_crossentropy_ND(y_true, y_pred):
-    '''
-    y_true must use an integer class representation
-    y_pred must use a one-hot class representation
-    '''
-    shp_y_pred = K.shape(y_pred)
-    y_pred_flat = K.reshape(y_pred, (K.prod(shp_y_pred[:-1]), shp_y_pred[-1]))
-    y_true_flat = K.flatten(y_true)
-    y_true_flat = K.cast(y_true_flat, 'int32')
-    out = K.categorical_crossentropy(y_pred_flat, y_true_flat)
-    return K.mean(out)
+
+# Define axes according to keras.
+batch_axis = 0
+class_axis = 1 if K.image_data_format()=='channels_first' else -1
 
 
-def dice_loss(y_true, y_pred):
+def categorical_crossentropy(weighted=False, masked_class=None):
     '''
-    Dice loss -- works for only binary classes.
-    Expects integer 0/1 class labeling in y_true, y_pred.
-    '''
-    smooth = 1
-    y_true_f = K.flatten(y_true)
-    y_true_f = K.cast(y_true_f, 'int32')
-    y_pred_f = K.flatten(y_pred)
-    intersection = K.sum(y_true_f * y_pred_f)
-    return -(2.*intersection+smooth) / (K.sum(y_true_f)+K.sum(y_pred_f)+smooth)
-
-
-def masked_dice_loss(y_true, y_pred):
-    '''
-    Dice loss -- works for only binary classes.
-    Expects integer 1/2 class labeling in y_true, y_pred.
+    Categorical crossentropy for N-dimensional inputs.
     
-    Class 0 is masked out.
+    Expects integer or one-hot class labeling in y_true.
     
-    NOTE: THEANO only
+    weighted : if True, loss is automatically reweighted with respect to
+        classes so that each class is given equal importance (simulates class
+        balancing).
+    masked_class : the (integer) class(es) that is/are masked out of the loss.
     '''
-    smooth = 1
-    y_true_f = K.flatten(y_true)
-    y_true_f = K.cast(y_true_f, 'int32')
-    y_pred_f = K.flatten(y_pred)
-    idxs = y_true_f.nonzero()
-    y_true_f = y_true_f[idxs] - 1
-    y_pred_f = y_pred_f[idxs]
-    intersection = K.sum(y_true_f * y_pred_f)
-    return -(2.*intersection+smooth) / (K.sum(y_true_f)+K.sum(y_pred_f)+smooth)
+    if masked_class is not None and not hasattr(masked_class, '__len__'):
+        masked_class = [masked_class]
+    
+    def categorical_crossentropy(y_true, y_pred):
+        shape_y_pred_f = (K.prod(K.shape(y_pred)[:-1]), K.shape(y_pred)[-1])
+        y_pred_f = K.reshape(y_pred, shape_y_pred_f)
+        n_classes = y_pred.shape[1]
+        if y_true.ndim==y_pred.ndim-1:
+            y_true = K.one_hot(y_true, n_classes)
+            dim_order = [0, y_true.ndim-1]+list(range(1, y_true.ndim-1))
+            y_true = K.permute_dimensions(y_true, dim_order)
+        y_true_f = K.flatten(y_true)
+        y_true_f = K.cast(y_true_f, 'int32')
+        cce = K.categorical_crossentropy(y_pred_f, y_true_f)
+        if weighted:
+            # inverse proportion
+            non_class_axes = [i for i in range(y_true.ndim) if i!=class_axis]
+            class_weights = K.sum(y_true) / K.sum(y_true,
+                                                  axis=non_class_axes,
+                                                  keepdims=True)
+            # weights sum to 1
+            class_weights = class_weights.flatten() / K.sum(class_weights)
+            weighted_y_true = y_true*class_weights
+            sample_weights = K.max(weighted_y_true, axis=class_axis)
+            wcce = cce*sample_weights
+        if masked_class is not None:
+            mask_out = K.sum([K.equal(y_true_f, t) for t in masked_class],
+                             axis=batch_axis)
+            idxs = K.not_equal(mask_out, 1).nonzero()
+            wcce = cce[idxs]
+        return K.mean(wcce)
+    
+    # Set a custom function name
+    tag = ""
+    if masked_class is not None:
+        tag += "_"+"_".join("m"+str(i) for i in masked_class)
+    dice.__name__ = "categorical_crossentropy"+tag
+    
+    return categorical_crossentropy
 
 
-def cce_with_regional_penalty(weight, power, nb_row, nb_col):
+def dice_loss(target_class=1, masked_class=None):
     '''
-    y_true has shape [batch_size, 1, w, h]
-    y_pred has shape [batch_size, num_classes, w, h]
+    Dice loss.
     
-    NOTE: THEANO only
+    Expects integer or one-hot class labeling in y_true.
+    Expects outputs in range [0, 1] in y_pred.
+    
+    Computes the soft dice loss considering all classes in target_class as one
+    aggregate target class and ignoring all elements with ground truth classes
+    in masked_class.
+    
+    target_class : integer or list
+    masked_class : integer or list
     '''
-    def f(y_true, y_pred):
-        loss = categorical_crossentropy_ND(y_true, y_pred)
-        
-        y_true_flat = y_true.flatten()
-        y_true_flat = K.cast(y_true_flat, 'int32')
-        y_true_onehot_flat = T.extra_ops.to_one_hot(y_true_flat,
-                                                    nb_class=y_pred.shape[-1])
-        y_true_onehot = K.reshape(y_true_onehot_flat, y_pred.shape)
-        
-        abs_err = K.abs(y_true_onehot-y_pred)
-        abs_err = K.permute_dimensions(abs_err, [0,3,1,2])
-        kernel = K.ones((2, 2, nb_row, nb_col)) / np.float32(nb_row*nb_col)
-        conv = K.conv2d(abs_err, kernel, strides=(1, 1), border_mode='same')
-        penalty = K.pow(conv, power)
-        return (1-weight)*loss + weight*K.mean(penalty)
-    return f 
+    if not hasattr(target_class, '__len__'):
+        target_class = [target_class]
+    if masked_class is not None and not hasattr(masked_class, '__len__'):
+        masked_class = [masked_class]
+    
+    # Define the keras expression.
+    def dice(y_true, y_pred):
+        smooth = 1
+        if y_true.ndim==y_pred.ndim:
+            # Change ground truth from categorical to integer format.
+            y_true = K.argmax(y_true, axis=class_axis)
+        y_true_f = K.flatten(y_true)
+        y_true_f = K.cast(y_true_f, 'int32')
+        y_pred_f = K.flatten(y_pred)
+        y_target = K.sum([K.equal(y_true_f, t) for t in target_class],
+                         axis=batch_axis)
+        if masked_class is not None:
+            mask_out = K.sum([K.equal(y_true_f, t) for t in masked_class], 
+                             axis=batch_axis)
+            idxs = K.not_equal(mask_out, 1).nonzero()
+            y_target = y_target[idxs]
+            y_pred_f = y_pred_f[idxs]
+        intersection = K.sum(y_target * y_pred_f)
+        return -(2.*intersection+smooth) / \
+                (K.sum(y_target)+K.sum(y_pred_f)+smooth)
+    
+    # Set a custom function name
+    tag = "_"+"_".join(str(i) for i in target_class)
+    if masked_class is not None:
+        tag += "_"+"_".join("m"+str(i) for i in masked_class)
+    dice.__name__ = "dice_loss"+tag
+    
+    return dice
+

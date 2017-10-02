@@ -1,16 +1,6 @@
-Barebones ResUNet (and MemCNN) repository with experimental script examples.
+Barebones code for easilly assembling a wide variety of FCN architectures.
 
 # Examples #
-
-## CIFAR-100 image classification ## 
-
-Download data into
-```
-/tmp/datasets/cifar100/cifar-100-python
-```
-
-Run example_memcnn_cifar100.py
-
 
 ## ISBI EM segmentation ##
 

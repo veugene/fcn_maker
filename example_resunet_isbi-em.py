@@ -9,15 +9,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 import tifffile as tf
 import os
-from lib.resunet import (assemble_model, 
-                         categorical_crossentropy_ND,
-                         dice_loss,
-                         cce_with_regional_penalty)
+from lib.model import assemble_model
+from lib.loss import dice_loss
 from lib.blocks import (basic_block_mp,
                         basic_block,
                         bottleneck)
 from keras.preprocessing.image import ImageDataGenerator
-from lib.logging import FileLogger
+from lib.callbacks import FileLogger
 from keras.callbacks import (EarlyStopping, 
                              LearningRateScheduler, 
                              ModelCheckpoint)
@@ -35,19 +33,19 @@ sys.setrecursionlimit(99999)
 model_kwargs = OrderedDict((
     ('input_shape', (1, 512, 512)),
     ('num_classes', 1),
-    ('input_num_filters', 16),
-    ('main_block_depth', [3, 8, 10, 3]),
+    ('num_filters', 16),
+    ('main_block_depth', [3, 8, 10, 3, 10, 8, 3]),
     ('num_main_blocks', 3),
-    ('num_init_blocks', 1),
+    ('num_adapt_blocks', 2),
+    ('skipblock_num_filters', None),
     ('weight_decay', 0.0001), 
     ('dropout', 0.1),
     ('short_skip', True),
     ('long_skip', True),
     ('long_skip_merge_mode', 'sum'),
-    ('use_skip_blocks', False),
-    ('relative_num_across_filters', 1),
     ('mainblock', bottleneck),
-    ('initblock', basic_block_mp)
+    ('initblock', basic_block_mp),
+    ('nonlinearity', 'relu')
     ))
 P = OrderedDict((
     ('n_train', 26),
@@ -55,7 +53,7 @@ P = OrderedDict((
     ('nb_epoch', 500),
     ('lr_schedule', False),
     ('early_stopping', False),
-    ('initial_lr', 0.001),
+    ('initial_lr', 0.0001),
     ('optimizer_type', 'RMSprop'), # 'RMSprop' or 'SGD'
     ))
 training = True
@@ -120,7 +118,7 @@ if training:
             sys.exit()
         if write_into=='r':
             shutil.rmtree(results_dir)
-            print("WARNING: Deleting existing results directory.")
+            print("\nWARNING: Deleting existing results directory.")
         print("")
     if not os.path.exists(results_dir):
         os.makedirs(results_dir)
@@ -135,7 +133,7 @@ if training:
     # Invert labels (if dice loss)
     if model_kwargs['num_classes']==1:
         Y = 1-Y
-
+    
     # Standardize the data
     mean = X.reshape(X.shape[0],
                      np.prod(X.shape[1:])).mean(axis=-1)[:,None,None]
@@ -161,7 +159,7 @@ if training:
                       ".yaml"), 'w').write(yaml_string)
 
     #model.summary()
-    model.compile(loss=dice_loss, 
+    model.compile(loss=dice_loss(), 
                   optimizer=optimizer, 
                   metrics=[accuracy])
 
@@ -178,10 +176,10 @@ if training:
 
     # Prepare data augmentation
     datagen = ImageDataGenerator(rotation_range=25,
-                                shear_range=0.41,
-                                horizontal_flip=True,
-                                vertical_flip=True,
-                                fill_mode='reflect')
+                                 shear_range=0.41,
+                                 horizontal_flip=True,
+                                 vertical_flip=True,
+                                 fill_mode='reflect')
 
                                 
     # Callbacks
@@ -193,8 +191,8 @@ if training:
                                    verbose=1, save_best_only=True)
     callbacks.append(checkpointer)
     logger = FileLogger(log_file_path=os.path.join(results_dir, 
-                                                  "training_log_" +
-                                                  str(experiment_ID) + ".txt"))
+                                                   "training_log_" +
+                                                   str(experiment_ID) + ".txt"))
     callbacks.append(logger)
     if P['lr_schedule']:
         change_lr = LearningRateScheduler(scheduler)
@@ -210,8 +208,8 @@ if training:
                                                Y_train, 
                                                batch_size=P['batch_size'], 
                                                shuffle=True),
-                                  samples_per_epoch=len(X_train), 
-                                  nb_epoch=P['nb_epoch'],
+                                  steps_per_epoch=len(X_train)//P['batch_size'], 
+                                  epochs=P['nb_epoch'],
                                   callbacks=callbacks,
                                   validation_data=(X_val, Y_val),
                                   verbose=2)
@@ -245,7 +243,7 @@ else:
     model.load_weights(os.path.join(results_dir, "weights_resunet_" + 
                                     str(experiment_ID) + ".hdf5"))
                        
-    model.compile(loss=dice_loss, 
+    model.compile(loss=dice_loss(), 
                   optimizer=optimizer, 
                   metrics=[accuracy])                                
     

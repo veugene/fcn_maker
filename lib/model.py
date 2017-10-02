@@ -15,8 +15,7 @@ from .blocks import (bottleneck,
                      basic_block_mp,
                      residual_block,
                      Convolution,
-                     get_nonlinearity,
-                     get_spatial_dims)
+                     get_nonlinearity)
 
 
 def _l2(decay):
@@ -236,8 +235,28 @@ def assemble_model(input_shape, num_classes, num_adapt_blocks, num_main_blocks,
             Expected target shape is larger than the shape of the tensor.
             """
             x, target = inputs
+            
+            # Determine spatial dimensions.
+            data_format = K.image_data_format()
+            if data_format not in {'channels_first', 'channels_last'}:
+                raise ValueError("Unknown data_format {}"
+                                 "".format(str(data_format)))
+            if ndim==2:
+                if data_format=='channels_first':
+                    spatial_dims = [2, 3]
+                else:
+                    spatial_dims = [1, 2]
+                spatial_padding = K.spatial_2d_padding
+            elif ndim==3:
+                if data_format=='channels_first':
+                    spatial_dims = [2, 3, 4]
+                else:
+                    spatial_dims = [1, 2, 3]
+            else:
+                raise ValueError('ndim must be 2 or 3')
+            
+            # Compute padding.
             padding = []
-            spatial_dims = get_spatial_dims(ndim)
             for dim in spatial_dims:
                 diff = target.shape[dim] - x.shape[dim]
                 padding.append((0, diff))

@@ -106,57 +106,26 @@ def _norm_relu_conv(filters, kernel_size, subsample=False, upsample=False,
 
 
 """
-Returns a list of the spatial dimensions in keras, handling data_format.
-"""
-def get_spatial_dims(ndim):
-    data_format = K.image_data_format()
-    if data_format not in {'channels_first', 'channels_last'}:
-        raise ValueError('Unknown data_format ' + str(data_format))
-    if ndim==2:
-        if data_format=='channels_first':
-            dims = [2, 3]
-        else:
-            dims = [1, 2]
-        spatial_padding = K.spatial_2d_padding
-    elif ndim==3:
-        if data_format=='channels_first':
-            dims = [2, 3, 4]
-        else:
-            dims = [1, 2, 3]
-    else:
-        raise ValueError('ndim must be 2 or 3')
-    return dims
-
-
-"""
 Adds a shortcut between input and residual block and merges them with 'sum'.
 """
 def _shortcut(input, residual, subsample, upsample, weight_decay=None,
               init='he_normal', ndim=2, name=None):
     name = _get_unique_name('shortcut', name)
     
-    # Expand channels of shortcut to match residual.
-    # Stride appropriately to match residual (width, height)
-    # Should be int if network architecture is correctly configured.
-    equal_channels = residual._keras_shape[1] == input._keras_shape[1]
-    
     shortcut = input
+    
+    # Determine channel axis
+    data_format = K.image_data_format()
+    if data_format not in {'channels_first', 'channels_last'}:
+        raise ValueError('Unknown data_format ' + str(data_format))
+    if data_format=='channels_first':
+        channel_axis = 1
+    else:
+        channel_axis = -1
     
     # Downsample input
     if subsample:
-        # Compute output shape after subsampling.
-        spatial_dims = get_spatial_dims(ndim)
-        def downsample_output_shape(input_shape):
-            output_shape = list(input_shape)
-            for dim in spatial_dims:
-                output_shape[dim] = None if output_shape[dim]==None \
-                                         else output_shape[dim]//2
-            return tuple(output_shape)
-        
         # Subsample function.
-        data_format = K.image_data_format()
-        if data_format not in {'channels_first', 'channels_last'}:
-            raise ValueError('Unknown data_format ' + str(data_format))
         if ndim==2 and data_format=='channels_first':
             subsample_func = lambda x: x[:,:,::2,::2]
         elif ndim==2 and data_format=='channels_last':
@@ -169,14 +138,20 @@ def _shortcut(input, residual, subsample, upsample, weight_decay=None,
             raise ValueError('ndim must be 2 or 3')
         
         # Execute subsampling in this layer
-        shortcut = Lambda(subsample_func,
-                          output_shape=downsample_output_shape)(shortcut)
+        output_shape = list(residual._keras_shape)
+        output_shape[channel_axis] = input._keras_shape[channel_axis]
+        output_shape = tuple(output_shape[1:])
+        shortcut = Lambda(subsample_func, output_shape=output_shape)(shortcut)
         
     # Upsample input
     if upsample:
         shortcut = UpSampling(size=2, ndim=ndim)(shortcut)
         
-    # Adjust input channels to match residual
+    # Expand channels of shortcut to match residual.
+    # Stride appropriately to match residual (width, height)
+    # Should be int if network architecture is correctly configured.
+    equal_channels = residual._keras_shape[channel_axis] == \
+                                               input._keras_shape[channel_axis]
     if not equal_channels:
         shortcut = Convolution(filters=residual._keras_shape[channel_axis],
                                kernel_size=1, ndim=ndim,

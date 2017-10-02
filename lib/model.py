@@ -230,30 +230,31 @@ def assemble_model(input_shape, num_classes, num_adapt_blocks, num_main_blocks,
                                        kernel_regularizer=_l2(weight_decay),
                                        name=_unique(name+'_concat'))(concat_x)
         
-        def _pad_to_fit(x, target_shape):
+        def _pad_to_fit(inputs):
             """
             Spatially pad a tensor's feature maps with zeros as evenly as
             possible (center it) to fit the target shape.
             
             Expected target shape is larger than the shape of the tensor.
             """
+            x, target = inputs
             padding = []
             spatial_dims = get_spatial_dims(ndim)
             for dim in spatial_dims:
-                diff = target_shape[dim] - x.shape[dim]
+                diff = target.shape[dim] - x.shape[dim]
                 padding.append((0, diff))
             if ndim==2:
                 spatial_padding = K.spatial_2d_padding
             if ndim==3:
                 spatial_padding = K.spatial_3d_padding
             x = spatial_padding(x, padding=padding, data_format=data_format)
+            x._keras_shape = target._keras_shape
             return x
         
         # Zero-pad upward path to match long skip resolution, if needed.
         zero_pad = Lambda(_pad_to_fit,
-                          output_shape=concat_x._keras_shape[1:],
-                          arguments={'target_shape': concat_x.shape})
-        prev_x = zero_pad(prev_x)
+                          output_shape=concat_x._keras_shape[1:])
+        prev_x = zero_pad([prev_x, concat_x])
         
         # Merge.
         if long_skip_merge_mode=='sum':

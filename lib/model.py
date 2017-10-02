@@ -15,7 +15,8 @@ from .blocks import (bottleneck,
                      basic_block_mp,
                      residual_block,
                      Convolution,
-                     get_nonlinearity)
+                     get_nonlinearity,
+                     get_spatial_dims)
 
 
 def _l2(decay):
@@ -32,8 +33,15 @@ def _softmax(x):
     """
     Softmax that works on ND inputs.
     """
-    e = K.exp(x - K.max(x, axis=-1, keepdims=True))
-    s = K.sum(e, axis=-1, keepdims=True)
+    data_format = K.image_data_format()
+    if data_format not in {'channels_first', 'channels_last'}:
+        raise ValueError('Unknown data_format ' + str(data_format))
+    if data_format=='channels_first':
+        axis = -1
+    else:
+        axis = -2
+    e = K.exp(x - K.max(x, axis=axis, keepdims=True))
+    s = K.sum(e, axis=axis, keepdims=True)
     return e / s
 
 def _unique(name):
@@ -102,6 +110,17 @@ def assemble_model(input_shape, num_classes, num_adapt_blocks, num_main_blocks,
     """
     
     '''
+    Determine channel axis.
+    '''
+    data_format = K.image_data_format()
+    if data_format not in {'channels_first', 'channels_last'}:
+        raise ValueError('Unknown data_format ' + str(data_format))
+    if data_format=='channels_first':
+        channel_axis = 1
+    else:
+        channel_axis = -1
+    
+    '''
     By default, use depth 2 bottleneck for mainblock
     '''
     if mainblock is None:
@@ -154,7 +173,7 @@ def assemble_model(input_shape, num_classes, num_adapt_blocks, num_main_blocks,
             norm_kwargs = {'momentum': 0.9,
                            'scale': True,
                            'center': True,
-                           'axis': 1}
+                           'axis': channel_axis}
         else:
             norm_kwargs = {}
             
@@ -194,7 +213,7 @@ def assemble_model(input_shape, num_classes, num_adapt_blocks, num_main_blocks,
                                       filters=skipblock_num_filters,
                                       **skip_kwargs)(concat_x)
         if long_skip_merge_mode == 'sum':
-            if prev_x._keras_shape[1] != num_target_filters:
+            if prev_x._keras_shape[channel_axis] != num_target_filters:
                 prev_x = Convolution(filters=num_target_filters,
                                      kernel_size=1,
                                      ndim=ndim,
@@ -202,7 +221,7 @@ def assemble_model(input_shape, num_classes, num_adapt_blocks, num_main_blocks,
                                      padding='valid',
                                      kernel_regularizer=_l2(weight_decay),
                                      name=_unique(name+'_prev'))(prev_x)
-            if concat_x._keras_shape[1] != num_target_filters:
+            if concat_x._keras_shape[channel_axis] != num_target_filters:
                 concat_x = Convolution(filters=num_target_filters,
                                        kernel_size=1,
                                        ndim=ndim,
@@ -218,25 +237,15 @@ def assemble_model(input_shape, num_classes, num_adapt_blocks, num_main_blocks,
             
             Expected target shape is larger than the shape of the tensor.
             """
-            data_format = K.image_data_format()
-            if data_format not in {'channels_first', 'channels_last'}:
-                raise ValueError('Unknown data_format ' + str(data_format))
-            if ndim==2:
-                if data_format=='channels_first':
-                    dims = [2, 3]
-                else:
-                    dims = [1, 2]
-                spatial_padding = K.spatial_2d_padding
-            if ndim==3:
-                if data_format=='channels_first':
-                    dims = [2, 3, 4]
-                else:
-                    dims = [1, 2, 3]
-                spatial_padding = K.spatial_3d_padding
             padding = []
-            for dim in dims:
+            spatial_dims = get_spatial_dims(ndim)
+            for dim in spatial_dims:
                 diff = target_shape[dim] - x.shape[dim]
                 padding.append((0, diff))
+            if ndim==2:
+                spatial_padding = K.spatial_2d_padding
+            if ndim==3:
+                spatial_padding = K.spatial_3d_padding
             x = spatial_padding(x, padding=padding, data_format=data_format)
             return x
         
@@ -250,7 +259,7 @@ def assemble_model(input_shape, num_classes, num_adapt_blocks, num_main_blocks,
         if long_skip_merge_mode=='sum':
             merged = add([prev_x, concat_x])
         elif long_skip_merge_mode=='concat':
-            merged = concatenate([prev_x, concat_x], axis=1)
+            merged = concatenate([prev_x, concat_x], axis=channel_axis)
         else:
             raise ValueError("Unrecognized merge mode: {}"
                              "".format(merge_mode))

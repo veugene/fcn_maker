@@ -1,6 +1,10 @@
 from keras import backend as K
-from theano import tensor as T
 import numpy as np
+
+
+# Define axes according to keras.
+batch_axis = 0
+class_axis = 1 if K.image_data_format()=='channels_first' else -1
 
 
 def categorical_crossentropy(weighted=False, masked_class=None):
@@ -30,18 +34,18 @@ def categorical_crossentropy(weighted=False, masked_class=None):
         cce = K.categorical_crossentropy(y_pred_f, y_true_f)
         if weighted:
             # inverse proportion
-            non_class_axes = [i for i in range(y_true.ndim) if i!=1]
+            non_class_axes = [i for i in range(y_true.ndim) if i!=class_axis]
             class_weights = K.sum(y_true) / K.sum(y_true,
                                                   axis=non_class_axes,
                                                   keepdims=True)
             # weights sum to 1
-            class_weights = class_weights.flatten() / T.sum(class_weights)
+            class_weights = class_weights.flatten() / K.sum(class_weights)
             weighted_y_true = y_true*class_weights
-            sample_weights = T.max(weighted_y_true, axis=1)
+            sample_weights = K.max(weighted_y_true, axis=class_axis)
             wcce = cce*sample_weights
         if masked_class is not None:
             mask_out = K.sum([K.equal(y_true_f, t) for t in masked_class],
-                             axis=0)
+                             axis=batch_axis)
             idxs = K.not_equal(mask_out, 1).nonzero()
             wcce = cce[idxs]
         return K.mean(wcce)
@@ -79,14 +83,15 @@ def dice_loss(target_class=1, masked_class=None):
         smooth = 1
         if y_true.ndim==y_pred.ndim:
             # Change ground truth from categorical to integer format.
-            y_true = K.argmax(y_true, axis=1)
+            y_true = K.argmax(y_true, axis=class_axis)
         y_true_f = K.flatten(y_true)
         y_true_f = K.cast(y_true_f, 'int32')
         y_pred_f = K.flatten(y_pred)
-        y_target = K.sum([K.equal(y_true_f, t) for t in target_class], axis=0)
+        y_target = K.sum([K.equal(y_true_f, t) for t in target_class],
+                         axis=batch_axis)
         if masked_class is not None:
             mask_out = K.sum([K.equal(y_true_f, t) for t in masked_class], 
-                             axis=0)
+                             axis=batch_axis)
             idxs = K.not_equal(mask_out, 1).nonzero()
             y_target = y_target[idxs]
             y_pred_f = y_pred_f[idxs]

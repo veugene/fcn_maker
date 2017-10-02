@@ -99,7 +99,32 @@ def _norm_relu_conv(filters, kernel_size, subsample=False, upsample=False,
     return f
 
 
-# Adds a shortcut between input and residual block and merges them with 'sum'
+"""
+Returns a list of the spatial dimensions in keras, handling data_format.
+"""
+def get_spatial_dims(ndim):
+    data_format = K.image_data_format()
+    if data_format not in {'channels_first', 'channels_last'}:
+        raise ValueError('Unknown data_format ' + str(data_format))
+    if ndim==2:
+        if data_format=='channels_first':
+            dims = [2, 3]
+        else:
+            dims = [1, 2]
+        spatial_padding = K.spatial_2d_padding
+    elif ndim==3:
+        if data_format=='channels_first':
+            dims = [2, 3, 4]
+        else:
+            dims = [1, 2, 3]
+    else:
+        raise ValueError('ndim must be 2 or 3')
+    return dims
+
+
+"""
+Adds a shortcut between input and residual block and merges them with 'sum'.
+"""
 def _shortcut(input, residual, subsample, upsample, normalization=None,
               weight_decay=None, init='he_normal', ndim=2, name=None):
     name = _get_unique_name('shortcut', name)
@@ -113,21 +138,25 @@ def _shortcut(input, residual, subsample, upsample, normalization=None,
     
     # Downsample input
     if subsample:
+        # Identify spatial dimensions
+        spatial_dims = get_spatial_dims(ndim)
+        
+        # Indices to subsample all spatial dimensions by 2x
+        subsample_indices = [slice(None, None)]*(ndim+2)
+        for dim in spatial_dims:
+            subsample_indices[dim] = slice(None, None, 2)
+        
+        # Compute output shape after subsampling
         def downsample_output_shape(input_shape):
             output_shape = list(input_shape)
-            output_shape[-2] = None if output_shape[-2]==None \
-                                    else output_shape[-2]//2
-            output_shape[-1] = None if output_shape[-1]==None \
-                                    else output_shape[-1]//2
+            for dim in spatial_dims:
+                output_shape[dim] = None if output_shape[dim]==None \
+                                         else output_shape[dim]//2
             return tuple(output_shape)
-        if ndim==2:
-            shortcut = Lambda(lambda x: x[:,:, ::2, ::2],
-                              output_shape=downsample_output_shape)(shortcut)
-        elif ndim==3:
-            shortcut = Lambda(lambda x: x[:,:,:, ::2, ::2],
-                              output_shape=downsample_output_shape)(shortcut)
-        else:
-            raise ValueError("ndim must be 2 or 3")
+        
+        # Execute subsampling in this layer
+        shortcut = Lambda(lambda x: x[subsample_indices],
+                          output_shape=downsample_output_shape)(shortcut)
         
     # Upsample input
     if upsample:
@@ -135,7 +164,7 @@ def _shortcut(input, residual, subsample, upsample, normalization=None,
         
     # Adjust input channels to match residual
     if not equal_channels:
-        shortcut = Convolution(filters=residual._keras_shape[1],
+        shortcut = Convolution(filters=residual._keras_shape[channel_axis],
                                kernel_size=1, ndim=ndim,
                                kernel_initializer=init, padding='valid',
                                kernel_regularizer=_l2(weight_decay),

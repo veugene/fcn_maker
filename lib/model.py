@@ -88,8 +88,10 @@ def assemble_model(input_shape, num_classes, num_adapt_blocks, num_main_blocks,
     long_skip_merge_mode : Either 'concat' or 'sum' features across long_skip.
     mainblock : A layer defining the mainblock (bottleneck by default).
     adaptblock : A layer defining the adaptblock (basic_block_mp by default).
-    dropout : A float [0, 1] specifying the dropout probability, introduced in
-        every block.
+    dropout : A float in [0, 1.], or a list of floats, specifying the dropout
+        probability, introduced in every block. If a list, sets a dropout
+        value for every adaptblock and mainblock.
+        Must be of length 2*(num_main_blocks+num_adapt_blocks)+1.
     normalization : the normalization to apply to layers (by default: batch
         normalization). If None, no normalization is applied.
     norm_kwargs : keyword arguments to pass to batch norm layers. For batch
@@ -151,6 +153,18 @@ def assemble_model(input_shape, num_classes, num_adapt_blocks, num_main_blocks,
         num_filters = num_filters_list
         
     '''
+    dropout can be passed as a scalar but must become a list for every
+    adaptblock and mainblock.
+    '''
+    if hasattr(dropout, '__len__'):
+        if len(dropout)!=2*(num_main_blocks+num_adapt_blocks)+1:
+            raise ValueError("dropout must have "
+                             "`2*(num_main_blocks+num_adapt_blocks)+1` values "
+                             "when passed as a list")
+    else:
+        dropout = [dropout]*(2*(num_main_blocks+num_adapt_blocks)+1)
+        
+    '''
     ndim must be only 2 or 3.
     '''
     if ndim not in [2, 3]:
@@ -173,7 +187,6 @@ def assemble_model(input_shape, num_classes, num_adapt_blocks, num_main_blocks,
     Constant kwargs passed to the init and main blocks.
     '''
     block_kwargs = {'skip': short_skip,
-                    'dropout': dropout,
                     'weight_decay': weight_decay,
                     'normalization': normalization,
                     'norm_kwargs': norm_kwargs,
@@ -287,6 +300,7 @@ def assemble_model(input_shape, num_classes, num_adapt_blocks, num_main_blocks,
         x = residual_block(adaptblock,
                            filters=n_filters,
                            repetitions=1,
+                           dropout=dropout[b],
                            subsample=True,
                            name=_unique('adaptblock_d'+str(b)),
                            **block_kwargs)(x)
@@ -300,6 +314,7 @@ def assemble_model(input_shape, num_classes, num_adapt_blocks, num_main_blocks,
         x = residual_block(mainblock,
                            filters=n_filters,
                            repetitions=main_block_depth[b],
+                           dropout=dropout[num_adapt_blocks+b],
                            subsample=True,
                            name=_unique('mainblock_d'+str(b)),
                            **block_kwargs)(x)
@@ -313,6 +328,7 @@ def assemble_model(input_shape, num_classes, num_adapt_blocks, num_main_blocks,
     x = residual_block(mainblock,
                        filters=n_filters,
                        repetitions=main_block_depth[num_main_blocks],
+                       dropout=dropout[num_adapt_blocks+num_main_blocks],
                        subsample=True,
                        upsample=True,
                        name=_unique('mainblock_a'),
@@ -333,6 +349,7 @@ def assemble_model(input_shape, num_classes, num_adapt_blocks, num_main_blocks,
         x = residual_block(mainblock,
                            filters=n_filters,
                            repetitions=main_block_depth[-b-1],
+                           dropout=dropout[-num_adapt_blocks-b-1],
                            upsample=True,
                            name=_unique('mainblock_u'+str(b)),
                            **block_kwargs)(x)
@@ -352,6 +369,7 @@ def assemble_model(input_shape, num_classes, num_adapt_blocks, num_main_blocks,
         x = residual_block(adaptblock,
                            filters=n_filters,
                            repetitions=1,
+                           dropout=dropout[-b-1],
                            upsample=True,
                            name=_unique('adaptblock_u'+str(b)),
                            **block_kwargs)(x)

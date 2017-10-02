@@ -265,7 +265,8 @@ def assemble_model(input_shape, num_classes, num_adapt_blocks, num_main_blocks,
         # Crop upward path to match long skip resolution, if needed.
         cropped_shape = list(concat_x._keras_shape)
         cropped_shape[channel_axis] = prev_x._keras_shape[channel_axis]
-        crop = Lambda(_crop_to_fit, output_shape=cropped_shape[1:])
+        cropped_shape = cropped_shape[1:]
+        crop = Lambda(_crop_to_fit, output_shape=cropped_shape)
         prev_x = crop([prev_x, concat_x])
         
         # Merge.
@@ -275,7 +276,7 @@ def assemble_model(input_shape, num_classes, num_adapt_blocks, num_main_blocks,
             merged = concatenate([prev_x, concat_x], axis=channel_axis)
         else:
             raise ValueError("Unrecognized merge mode: {}"
-                             "".format(merge_mode))
+                             "".format(long_skip_merge_mode))
         return merged
     
     '''

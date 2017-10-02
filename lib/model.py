@@ -246,12 +246,12 @@ def assemble_model(input_shape, num_classes, num_adapt_blocks, num_main_blocks,
             if ndim==3:
                 spatial_padding = K.spatial_3d_padding
             x = spatial_padding(x, padding=padding, data_format=data_format)
-            x._keras_shape = target._keras_shape
             return x
         
         # Zero-pad upward path to match long skip resolution, if needed.
-        zero_pad = Lambda(_pad_to_fit,
-                          output_shape=concat_x._keras_shape[1:])
+        padded_shape = list(concat_x._keras_shape)
+        padded_shape[channel_axis] = prev_x._keras_shape[channel_axis]
+        zero_pad = Lambda(_pad_to_fit, output_shape=padded_shape[1:])
         prev_x = zero_pad([prev_x, concat_x])
         
         # Merge.

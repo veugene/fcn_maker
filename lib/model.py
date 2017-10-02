@@ -227,12 +227,10 @@ def assemble_model(input_shape, num_classes, num_adapt_blocks, num_main_blocks,
                                        kernel_regularizer=_l2(weight_decay),
                                        name=_unique(name+'_concat'))(concat_x)
         
-        def _pad_to_fit(inputs):
+        def _crop_to_fit(inputs):
             """
-            Spatially pad a tensor's feature maps with zeros as evenly as
-            possible (center it) to fit the target shape.
-            
-            Expected target shape is larger than the shape of the tensor.
+            Spatially crop a tensor's feature maps to the shape of the target
+            tensor. Target is thus expected to be smaller.
             """
             x, target = inputs
             
@@ -255,23 +253,20 @@ def assemble_model(input_shape, num_classes, num_adapt_blocks, num_main_blocks,
             else:
                 raise ValueError('ndim must be 2 or 3')
             
-            # Compute padding.
-            padding = []
+            # Compute slices for cropping.
+            indices = [slice(None, None)]*(ndim+2)
             for dim in spatial_dims:
-                diff = target.shape[dim] - x.shape[dim]
-                padding.append((0, diff))
-            if ndim==2:
-                spatial_padding = K.spatial_2d_padding
-            if ndim==3:
-                spatial_padding = K.spatial_3d_padding
-            x = spatial_padding(x, padding=padding, data_format=data_format)
+                indices[dim] = slice(0, target.shape[dim])
+            
+            # Crop.
+            x = x[indices]
             return x
         
-        # Zero-pad upward path to match long skip resolution, if needed.
-        padded_shape = list(concat_x._keras_shape)
-        padded_shape[channel_axis] = prev_x._keras_shape[channel_axis]
-        zero_pad = Lambda(_pad_to_fit, output_shape=padded_shape[1:])
-        prev_x = zero_pad([prev_x, concat_x])
+        # Crop upward path to match long skip resolution, if needed.
+        cropped_shape = list(concat_x._keras_shape)
+        cropped_shape[channel_axis] = prev_x._keras_shape[channel_axis]
+        crop = Lambda(_crop_to_fit, output_shape=cropped_shape[1:])
+        prev_x = crop([prev_x, concat_x])
         
         # Merge.
         if long_skip_merge_mode=='sum':

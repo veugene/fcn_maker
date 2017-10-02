@@ -223,7 +223,7 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
         if merge_mode=='sum':
             merged = add([prev_x, concat_x])
         elif merge_mode=='concat':
-            merged = concatenate([prev_x, concat_x], concat_axis=1)
+            merged = concatenate([prev_x, concat_x], axis=1)
         else:
             raise ValueError("Unrecognized merge mode: {}"
                              "".format(merge_mode))

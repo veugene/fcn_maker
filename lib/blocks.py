@@ -335,6 +335,55 @@ def basic_block_mp(filters, subsample=False, upsample=False, skip=True,
 
 
 """
+ A single basic 3x3 convolution with 2x2 conv upsampling, as in the UNet.
+"""
+def unet_block(filters, subsample=False, upsample=False, skip=True,
+               dropout=0., normalization=BatchNormalization, 
+               weight_decay=None, norm_kwargs=None, init='he_normal',
+               nonlinearity='relu', ndim=2, name=None):
+    name = _get_unique_name('unet_block', name)
+    if norm_kwargs is None:
+        norm_kwargs = {}
+    def f(input):
+        output = input
+        if normalization is not None:
+            output = normalization(name=name+"_norm", **norm_kwargs)(output)
+        output = get_nonlinearity(nonlinearity)(output)
+        if subsample:
+            output = MaxPooling(pool_size=2, ndim=ndim)(output)
+        output = Convolution(filters=filters,
+                             kernel_size=3,
+                             ndim=ndim,
+                             kernel_initializer=init,
+                             padding='same',
+                             kernel_regularizer=_l2(weight_decay),
+                             name=name+"_conv")(output)
+        if dropout > 0:
+            output = Dropout(dropout)(output)
+        if upsample:
+            output = UpSampling(size=2, ndim=ndim)(output)
+            output = Convolution(filters=filters,
+                                 kernel_size=2,
+                                 ndim=ndim,
+                                 kernel_initializer=init,
+                                 padding='same',
+                                 kernel_regularizer=_l2(weight_decay),
+                                 name=name+"_upconv")(output)
+        
+        if skip:
+            output = _shortcut(input, output,
+                               subsample=subsample,
+                               upsample=upsample,
+                               weight_decay=weight_decay,
+                               init=init,
+                               ndim=ndim,
+                               name=name)
+        return output
+
+    return f
+
+
+"""
 Builds a residual block with repeating bottleneck blocks.
 """
 def residual_block(block_function, filters, repetitions, skip=True,

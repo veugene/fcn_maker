@@ -131,8 +131,8 @@ def get_spatial_dims(ndim):
 """
 Adds a shortcut between input and residual block and merges them with 'sum'.
 """
-def _shortcut(input, residual, subsample, upsample, normalization=None,
-              weight_decay=None, init='he_normal', ndim=2, name=None):
+def _shortcut(input, residual, subsample, upsample, weight_decay=None,
+              init='he_normal', ndim=2, name=None):
     name = _get_unique_name('shortcut', name)
     
     # Expand channels of shortcut to match residual.
@@ -238,7 +238,6 @@ def bottleneck(filters, subsample=False, upsample=False, skip=True,
         if skip:
             output = _shortcut(input, output,
                                subsample=subsample, upsample=upsample,
-                               normalization=normalization,
                                weight_decay=weight_decay, init=init,
                                ndim=ndim, name=name)
         return output
@@ -284,7 +283,6 @@ def basic_block(filters, subsample=False, upsample=False, skip=True,
             output = _shortcut(input, output,
                                subsample=subsample,
                                upsample=upsample,
-                               normalization=normalization,
                                weight_decay=weight_decay,
                                init=init,
                                ndim=ndim,
@@ -329,7 +327,6 @@ def basic_block_mp(filters, subsample=False, upsample=False, skip=True,
         if skip:
             output = _shortcut(input, output,
                                subsample=subsample, upsample=upsample,
-                               normalization=normalization,
                                weight_decay=weight_decay, init=init,
                                ndim=ndim, name=name)
         return output

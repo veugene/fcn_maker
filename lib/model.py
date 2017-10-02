@@ -38,13 +38,12 @@ def _softmax(x):
     
     
 def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
-                   main_block_depth, input_num_filters, short_skip=True,
+                   main_block_depth, num_filters, short_skip=True,
                    long_skip=True, long_skip_merge_mode='concat',
-                   mainblock=None, initblock=None, use_skip_blocks=True,
-                   skipblock=None, relative_num_across_filters=1,
-                   num_residuals=1, dropout=0., weight_decay=None, 
-                   init='he_normal', batch_norm=True,  bn_kwargs=None, ndim=2,
-                   verbose=True):
+                   mainblock=None, initblock=None, skipblock_num_filters=None,
+                   skipblock=None, num_residuals=1, dropout=0., 
+                   weight_decay=None, init='he_normal', batch_norm=True, 
+                   bn_kwargs=None, ndim=2, verbose=True):
     """
     input_shape : A tuple specifiying the 2D image input shape.
     num_classes : The number of classes in the segmentation output.
@@ -59,8 +58,14 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
         values (there are num_mainblocks on the contracting path and on the 
         expanding path, as well as as one on the across path). Zero is a valid
         depth.
-    input_num_filters : The number channels in the first (last) convolutional
-        layer in the model (and of each initblock).
+    num_filters : Can be an int or a list of ints, specifying the number of
+        filters for each block.
+        If an int, sets the number filters in the first and last convolutional
+        layer in the model, as well as of every init_block. Each main_block
+        doubles (halves) the number of filters for each decrease (increase) in
+        resolution.
+        If a list, specifies the number of filters for each convolution/block.
+        Must be of length 2*(num_main_blocks+num_init_blocks)+3.
     short_skip : A boolean specifying whether to use ResNet-like shortcut
         connections from the input of each block to its output. The inputs are
         summed with the outputs.
@@ -70,11 +75,9 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
     long_skip_merge_mode : Either 'concat' or 'sum' features across long_skip.
     mainblock : A layer defining the mainblock (bottleneck by default).
     initblock : A layer defining the initblock (basic_block_mp by default).
-    use_skip_blocks : A boolean specifying whether to pass features skipped
-        along long_skip through skipblocks.
+    skipblock_num_filters : The number of filters to use for skip blocks.
+        If None, skip blocks will not be used..
     skipblock : A layer defining the skipblock (basic_block_mp by default).
-    relative_num_across_filters : Multiply the number of channels in the across
-        path (and in each skipblock, if they exist) by this integer value.
     num_residuals : The number of parallel residual functions per block.
     dropout : A float [0, 1] specifying the dropout probability, introduced in
         every block.
@@ -112,6 +115,22 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
                              "passed as a list")
     else:
         main_block_depth = [main_block_depth]*(2*num_main_blocks+1)
+    
+    '''
+    num_filters can be a list per convolution/block or a single value
+    -- ensure the list length is correct (if list) or convert to list
+    '''
+    if hasattr(num_filters, '__len__'):
+        if len(num_filters)!=2*(num_main_blocks+num_init_blocks)+3:
+            raise ValueError("num_filters must have "
+                             "`2*(num_main_blocks+num_init_blocks)+3` values "
+                             "when passed as a list")
+    else:
+        num_filters_list = [num_filters]*(num_init_blocks+1)
+        num_filters_list += [num_filters*(2**b) \
+                                             for b in range(num_main_blocks+1)]
+        num_filters_list += num_filters_list[-2::-1]
+        num_filters = num_filters_list
         
     '''
     ndim must be only 2 or 3.
@@ -135,11 +154,6 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
     If long skip is not (the defualt) identity, always pass these
     parameters to make_long_skip
     '''
-    long_skip_kwargs = {'use_skip_blocks': use_skip_blocks,
-                        'repetitions': 1,
-                        'merge_mode': long_skip_merge_mode,
-                        'block': skipblock}
-    long_skip_kwargs.update(block_kwargs)
     
     '''
     Function to print if verbose==True
@@ -154,40 +168,32 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
     Helper function to create a long skip connection with concatenation.
     Concatenated information is not transformed if use_skip_blocks is False.
     '''
-    def make_long_skip(prev_x, concat_x, num_concat_filters, bn_kwargs,
-                       num_target_filters, use_skip_blocks, repetitions,
-                       dropout, skip, batch_norm, weight_decay, num_residuals,
-                       merge_mode='concat', block=bottleneck, name=None):
-        
-        if use_skip_blocks:
-            concat_x = residual_block( \
-                                       block,
-                                       nb_filter=num_concat_filters,
-                                       repetitions=repetitions,
-                                       dropout=dropout,
-                                       skip=skip,
-                                       batch_norm=batch_norm,
-                                       bn_kwargs=bn_kwargs,
-                                       weight_decay=weight_decay)(concat_x)
-        if merge_mode == 'sum':
+    def make_long_skip(prev_x, concat_x, num_target_filters, name=None):
+            
+        if skipblock_num_filters is not None:
+            skip_kwargs = {}
+            skip_kwargs.update(block_kwargs)
+            skip_kwargs['repetitions'] = 1
+            concat_x = residual_block(skipblock,
+                                      nb_filter=skipblock_num_filters,
+                                      **skip_kwargs)(concat_x)
+        if long_skip_merge_mode == 'sum':
             if prev_x._keras_shape[1] != num_target_filters:
-                prev_x = Convolution( \
-                                filters=num_target_filters,
-                                kernel_size=1,
-                                ndim=ndim,
-                                kernel_initializer=init,
-                                padding='valid',
-                                kernel_regularizer=_l2(weight_decay),
-                                name=name+'_prev')(prev_x)
+                prev_x = Convolution(filters=num_target_filters,
+                                     kernel_size=1,
+                                     ndim=ndim,
+                                     kernel_initializer=init,
+                                     padding='valid',
+                                     kernel_regularizer=_l2(weight_decay),
+                                     name=name+'_prev')(prev_x)
             if concat_x._keras_shape[1] != num_target_filters:
-                concat_x = Convolution(\
-                                filters=num_target_filters,
-                                kernel_size=1,
-                                ndim=ndim,
-                                kernel_initializer=init,
-                                padding='valid',
-                                kernel_regularizer=_l2(weight_decay),
-                                name=name+'_concat')(concat_x)
+                concat_x = Convolution(filters=num_target_filters,
+                                       kernel_size=1,
+                                       ndim=ndim,
+                                       kernel_initializer=init,
+                                       padding='valid',
+                                       kernel_regularizer=_l2(weight_decay),
+                                       name=name+'_concat')(concat_x)
                 
         #def _pad_to_fit(x, target_shape):
             #"""
@@ -216,9 +222,9 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
                           #arguments={'target_shape': concat_x.shape})
         #prev_x = zero_pad(prev_x)
         
-        if merge_mode=='sum':
+        if long_skip_merge_mode=='sum':
             merged = add([prev_x, concat_x])
-        elif merge_mode=='concat':
+        elif long_skip_merge_mode=='concat':
             merged = concatenate([prev_x, concat_x], axis=1)
         else:
             raise ValueError("Unrecognized merge mode: {}"
@@ -232,7 +238,7 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
     model_input = Input(shape=input_shape)
     
     # Initial convolution
-    x = Convolution(filters=input_num_filters,
+    x = Convolution(filters=num_filters[0],
                     kernel_size=3,
                     ndim=ndim,
                     kernel_initializer=init,
@@ -244,6 +250,7 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
     # DOWN (initial subsampling blocks)
     for b in range(0, num_init_blocks):
         depth = b+1
+        nb_filter = num_filters[1+b]
         x = residual_block(initblock,
                            nb_filter=nb_filter,
                            repetitions=1,
@@ -253,12 +260,12 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
         tensors[depth] = x
         v_print("INIT DOWN {}: {}".format(b, x._keras_shape))
     
-    # DOWN (resnet blocks)
+    # DOWN (main blocks)
     for b in range(0, num_main_blocks):
         depth = b+1+num_init_blocks
-        num_filters = input_num_filters*(2**b)
+        nb_filter = num_filters[1+num_init_blocks+b]
         x = residual_block(mainblock,
-                           nb_filter=num_filters,
+                           nb_filter=nb_filter,
                            repetitions=main_block_depth[b],
                            subsample=True,
                            name='mainblock_d'+str(b),
@@ -269,10 +276,9 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
                     "".format(b, main_block_depth[b], x._keras_shape))
         
     # ACROSS
-    num_filters = input_num_filters*(2**num_main_blocks)
-    num_filters *= relative_num_across_filters
+    nb_filter = num_filters[1+num_init_blocks+num_main_blocks]
     x = residual_block(mainblock,
-                       nb_filter=num_filters, 
+                       nb_filter=nb_filter,
                        repetitions=main_block_depth[num_main_blocks],
                        subsample=True,
                        upsample=True,
@@ -282,20 +288,17 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
         v_print("ACROSS (depth {}): {}"
                 "".format(main_block_depth[num_main_blocks], x._keras_shape))
 
-    # UP (resnet blocks)
+    # UP (main blocks)
     for b in range(num_main_blocks-1, -1, -1):
         depth = b+1+num_init_blocks
-        num_filters = input_num_filters*(2**b)
+        nb_filter = num_filters[-1-1-num_init_blocks-b]
         if long_skip:
-            num_across_filters = num_filters*relative_num_across_filters
             x = make_long_skip(prev_x=x,
                                concat_x=tensors[depth],
-                               num_concat_filters=num_across_filters,
-                               num_target_filters=num_filters,
-                               name='concat_main_'+str(b),
-                               **long_skip_kwargs)
+                               num_target_filters=nb_filter,
+                               name='concat_main_'+str(b))
         x = residual_block(mainblock,
-                           nb_filter=num_filters,
+                           nb_filter=nb_filter,
                            repetitions=main_block_depth[-b-1],
                            upsample=True,
                            name='mainblock_u'+str(b),
@@ -307,14 +310,12 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
     # UP (final upsampling blocks)
     for b in range(num_init_blocks-1, -1, -1):
         depth = b+1
+        nb_filter = num_filters[-1-1-b]
         if long_skip:
-            num_across_filters = input_num_filters*relative_num_across_filters
             x = make_long_skip(prev_x=x,
                                concat_x=tensors[depth],
-                               num_concat_filters=num_across_filters,
-                               num_target_filters=input_num_filters,
-                               name='concat_init_'+str(b),
-                               **long_skip_kwargs)
+                               num_target_filters=nb_filter,
+                               name='concat_init_'+str(b))
         x = residual_block(initblock,
                            nb_filter=nb_filter,
                            repetitions=1,
@@ -325,14 +326,11 @@ def assemble_model(input_shape, num_classes, num_init_blocks, num_main_blocks,
         
     # Final convolution
     if long_skip:
-        num_across_filters = input_num_filters*relative_num_across_filters
         x = make_long_skip(prev_x=x,
                            concat_x=tensors[0],
-                           num_concat_filters=num_across_filters,
-                           num_target_filters=input_num_filters,
-                           name='concat_top',
-                           **long_skip_kwargs)
-    x = Convolution(filters=input_num_filters,
+                           num_target_filters=num_filters[-1],
+                           name='concat_top')
+    x = Convolution(filters=num_filters[-1],
                     kernel_size=3,
                     ndim=ndim,
                     kernel_initializer=init,

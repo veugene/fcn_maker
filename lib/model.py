@@ -55,7 +55,7 @@ def assemble_model(input_shape, num_classes, num_adapt_blocks, num_main_blocks,
                    main_block_depth, num_filters, short_skip=True,
                    long_skip=True, long_skip_merge_mode='concat',
                    mainblock=None, initblock=None, skipblock=None,
-                   skipblock_num_filters=None, num_residuals=1, dropout=0.,
+                   skipblock_num_filters=None, dropout=0.,
                    normalization=BatchNormalization, norm_kwargs=None,
                    weight_decay=None, init='he_normal', batch_norm=True, 
                    nonlinearity='relu', ndim=2, verbose=True):
@@ -93,7 +93,6 @@ def assemble_model(input_shape, num_classes, num_adapt_blocks, num_main_blocks,
     skipblock_num_filters : The number of filters to use for skip blocks.
         If None, skip blocks will not be used..
     skipblock : A layer defining the skipblock (basic_block_mp by default).
-    num_residuals : The number of parallel residual functions per block.
     dropout : A float [0, 1] specifying the dropout probability, introduced in
         every block.
     normalization : the normalization to apply to layers (by default: batch
@@ -183,7 +182,6 @@ def assemble_model(input_shape, num_classes, num_adapt_blocks, num_main_blocks,
     block_kwargs = {'skip': short_skip,
                     'dropout': dropout,
                     'weight_decay': weight_decay,
-                    'num_residuals': num_residuals,
                     'normalization': normalization,
                     'norm_kwargs': norm_kwargs,
                     'nonlinearity': nonlinearity,

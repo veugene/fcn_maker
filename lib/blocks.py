@@ -144,15 +144,8 @@ def _shortcut(input, residual, subsample, upsample, normalization=None,
     
     # Downsample input
     if subsample:
-        # Identify spatial dimensions
+        # Compute output shape after subsampling.
         spatial_dims = get_spatial_dims(ndim)
-        
-        # Indices to subsample all spatial dimensions by 2x
-        subsample_indices = [slice(None, None)]*(ndim+2)
-        for dim in spatial_dims:
-            subsample_indices[dim] = slice(None, None, 2)
-        
-        # Compute output shape after subsampling
         def downsample_output_shape(input_shape):
             output_shape = list(input_shape)
             for dim in spatial_dims:
@@ -160,8 +153,23 @@ def _shortcut(input, residual, subsample, upsample, normalization=None,
                                          else output_shape[dim]//2
             return tuple(output_shape)
         
+        # Subsample function.
+        data_format = K.image_data_format()
+        if data_format not in {'channels_first', 'channels_last'}:
+            raise ValueError('Unknown data_format ' + str(data_format))
+        if ndim==2 and data_format=='channels_first':
+            subsample_func = lambda x: x[:,:,::2,::2]
+        elif ndim==2 and data_format=='channels_last':
+            subsample_func = lambda x: x[:,::2,::2,:]
+        elif ndim==3 and data_format=='channels_first':
+            subsample_func = lambda x: x[:,:,:,::2,::2]
+        elif ndim==3 and data_format=='channels_last':
+            subsample_func = lambda x: x[:,:,::2,::2,:]
+        else:
+            raise ValueError('ndim must be 2 or 3')
+        
         # Execute subsampling in this layer
-        shortcut = Lambda(lambda x: x[subsample_indices],
+        shortcut = Lambda(subsample_func,
                           output_shape=downsample_output_shape)(shortcut)
         
     # Upsample input

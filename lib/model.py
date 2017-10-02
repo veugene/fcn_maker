@@ -57,8 +57,8 @@ def assemble_model(input_shape, num_classes, num_adapt_blocks, num_main_blocks,
                    mainblock=None, initblock=None, skipblock=None,
                    skipblock_num_filters=None, dropout=0.,
                    normalization=BatchNormalization, norm_kwargs=None,
-                   weight_decay=None, init='he_normal', batch_norm=True, 
-                   nonlinearity='relu', ndim=2, verbose=True):
+                   weight_decay=None, init='he_normal', nonlinearity='relu',
+                   ndim=2, verbose=True):
     """
     input_shape : A tuple specifiying the 2D image input shape.
     num_classes : The number of classes in the segmentation output.

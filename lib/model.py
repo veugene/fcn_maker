@@ -53,19 +53,19 @@ def _unique(name):
 def assemble_model(input_shape, num_classes, num_adapt_blocks, num_main_blocks,
                    main_block_depth, num_filters, short_skip=True,
                    long_skip=True, long_skip_merge_mode='concat',
-                   mainblock=None, initblock=None, dropout=0.,
+                   mainblock=None, adaptblock=None, dropout=0.,
                    normalization=BatchNormalization, norm_kwargs=None,
                    weight_decay=None, init='he_normal', nonlinearity='relu',
                    ndim=2, verbose=True):
     """
     input_shape : A tuple specifiying the 2D image input shape.
     num_classes : The number of classes in the segmentation output.
-    num_adapt_blocks : The number of blocks of type initblock, above 
+    num_adapt_blocks : The number of blocks of type adaptblock, above 
         mainblocks. These blocks always have the same number of channels as
         the first convolutional layer in the model.
-    num_main_blocks : The number of blocks of type mainblock, below initblocks.
-        These blocks double (halve) the number of channels at each downsampling
-        (upsampling).
+    num_main_blocks : The number of blocks of type mainblock, below 
+        adaptblocks. These blocks double (halve) the number of channels at each
+        downsampling (upsampling).
     main_block_depth : An integer or list of integers specifying the number of
         repetitions of each mainblock. A list must contain 2*num_main_blocks+1
         values (there are num_mainblocks on the contracting path and on the 
@@ -87,7 +87,7 @@ def assemble_model(input_shape, num_classes, num_adapt_blocks, num_main_blocks,
         or sum features across.
     long_skip_merge_mode : Either 'concat' or 'sum' features across long_skip.
     mainblock : A layer defining the mainblock (bottleneck by default).
-    initblock : A layer defining the initblock (basic_block_mp by default).
+    adaptblock : A layer defining the adaptblock (basic_block_mp by default).
     dropout : A float [0, 1] specifying the dropout probability, introduced in
         every block.
     normalization : the normalization to apply to layers (by default: batch
@@ -119,8 +119,8 @@ def assemble_model(input_shape, num_classes, num_adapt_blocks, num_main_blocks,
     '''
     if mainblock is None:
         mainblock = bottleneck
-    if initblock is None:
-        initblock = basic_block_mp
+    if adaptblock is None:
+        adaptblock = basic_block_mp
     
     '''
     main_block_depth can be a list per block or a single value 
@@ -284,11 +284,11 @@ def assemble_model(input_shape, num_classes, num_adapt_blocks, num_main_blocks,
     for b in range(0, num_adapt_blocks):
         depth = b+1
         n_filters = num_filters[1+b]
-        x = residual_block(initblock,
+        x = residual_block(adaptblock,
                            filters=n_filters,
                            repetitions=1,
                            subsample=True,
-                           name=_unique('initblock_d'+str(b)),
+                           name=_unique('adaptblock_d'+str(b)),
                            **block_kwargs)(x)
         tensors[depth] = x
         v_print("ADAPT DOWN {}: {}".format(b, x._keras_shape))
@@ -349,11 +349,11 @@ def assemble_model(input_shape, num_classes, num_adapt_blocks, num_main_blocks,
                                concat_x=tensors[depth],
                                num_target_filters=n_filters,
                                name=_unique('concat_init_'+str(b)))
-        x = residual_block(initblock,
+        x = residual_block(adaptblock,
                            filters=n_filters,
                            repetitions=1,
                            upsample=True,
-                           name=_unique('initblock_u'+str(b)),
+                           name=_unique('adaptblock_u'+str(b)),
                            **block_kwargs)(x)
         v_print("ADAPT UP {}: {}".format(b, x._keras_shape))
         

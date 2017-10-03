@@ -111,7 +111,6 @@ Adds a shortcut between input and residual block and merges them with 'sum'.
 def _shortcut(input, residual, subsample, upsample, weight_decay=None,
               init='he_normal', ndim=2, name=None):
     name = _get_unique_name('shortcut', name)
-    
     shortcut = input
     
     # Determine channel axis
@@ -137,10 +136,14 @@ def _shortcut(input, residual, subsample, upsample, weight_decay=None,
         else:
             raise ValueError('ndim must be 2 or 3')
         
-        # Execute subsampling in this layer
-        output_shape = list(residual._keras_shape)
-        output_shape[channel_axis] = input._keras_shape[channel_axis]
+        # Output shape.
+        output_shape = list(shortcut._keras_shape)
+        spatial_dims = set(range(ndim+2)).difference([0, channel_axis])
+        for dim in spatial_dims:
+            output_shape[dim] = output_shape[dim]//2
         output_shape = tuple(output_shape[1:])
+        
+        # Execute subsampling in this layer
         shortcut = Lambda(subsample_func, output_shape=output_shape)(shortcut)
         
     # Upsample input
@@ -310,7 +313,7 @@ def basic_block_mp(filters, subsample=False, upsample=False, skip=True,
 
 
 """
- A single basic 3x3 convolution with 2x2 conv upsampling, as in the UNet.
+A single basic 3x3 convolution with 2x2 conv upsampling, as in the UNet.
 """
 def unet_block(filters, subsample=False, upsample=False, skip=True,
                dropout=0., normalization=BatchNormalization, 
@@ -321,9 +324,6 @@ def unet_block(filters, subsample=False, upsample=False, skip=True,
         norm_kwargs = {}
     def f(input):
         output = input
-        if normalization is not None:
-            output = normalization(name=name+"_norm", **norm_kwargs)(output)
-        output = get_nonlinearity(nonlinearity)(output)
         if subsample:
             output = MaxPooling(pool_size=2, ndim=ndim)(output)
         output = Convolution(filters=filters,
@@ -333,6 +333,18 @@ def unet_block(filters, subsample=False, upsample=False, skip=True,
                              padding='same',
                              kernel_regularizer=_l2(weight_decay),
                              name=name+"_conv")(output)
+        output = _norm_relu_conv(filters,
+                                 kernel_size=3,
+                                 normalization=normalization,
+                                 weight_decay=weight_decay,
+                                 norm_kwargs=norm_kwargs,
+                                 init=init,
+                                 nonlinearity=nonlinearity,
+                                 ndim=ndim,
+                                 name=name)(output)
+        if normalization is not None:
+            output = normalization(name=name+"_norm", **norm_kwargs)(output)
+        output = get_nonlinearity(nonlinearity)(output)
         if dropout > 0:
             output = Dropout(dropout)(output)
         if upsample:
@@ -344,7 +356,7 @@ def unet_block(filters, subsample=False, upsample=False, skip=True,
                                  padding='same',
                                  kernel_regularizer=_l2(weight_decay),
                                  name=name+"_upconv")(output)
-        
+            output = get_nonlinearity(nonlinearity)(output)
         if skip:
             output = _shortcut(input, output,
                                subsample=subsample,
@@ -359,7 +371,7 @@ def unet_block(filters, subsample=False, upsample=False, skip=True,
 
 
 """
-Builds a residual block with repeating bottleneck blocks.
+Builds a residual block with repeating sub-blocks.
 """
 def residual_block(block_function, filters, repetitions, skip=True,
                    dropout=0., subsample=False, upsample=False,

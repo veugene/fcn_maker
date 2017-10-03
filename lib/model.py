@@ -14,6 +14,7 @@ from .blocks import (bottleneck,
                      basic_block,
                      basic_block_mp,
                      residual_block,
+                     unet_block,
                      Convolution,
                      get_nonlinearity)
 
@@ -50,56 +51,33 @@ def _unique(name):
     return name + '_' + str(K.get_uid(name))
     
     
-def assemble_model(input_shape, num_classes, num_adapt_blocks, num_main_blocks,
-                   main_block_depth, num_filters, short_skip=True,
-                   long_skip=True, long_skip_merge_mode='concat',
-                   mainblock=None, adaptblock=None, dropout=0.,
-                   normalization=BatchNormalization, norm_kwargs=None,
-                   weight_decay=None, init='he_normal', nonlinearity='relu',
-                   ndim=2, verbose=True):
+def assemble_model(input_shape, num_classes, blocks, preprocessor=None,
+                   postprocessor=None, long_skip=True,
+                   long_skip_merge_mode='concat', init='he_normal',
+                   weight_decay=0.0001, ndim=2, verbose=True):
     """
     input_shape : A tuple specifiying the 2D image input shape.
-    num_classes : The number of classes in the segmentation output.
-    num_adapt_blocks : The number of blocks of type adaptblock, above 
-        mainblocks. These blocks always have the same number of channels as
-        the first convolutional layer in the model.
-    num_main_blocks : The number of blocks of type mainblock, below 
-        adaptblocks. These blocks double (halve) the number of channels at each
-        downsampling (upsampling).
-    main_block_depth : An integer or list of integers specifying the number of
-        repetitions of each mainblock. A list must contain 2*num_main_blocks+1
-        values (there are num_mainblocks on the contracting path and on the 
-        expanding path, as well as as one on the across path). Zero is a valid
-        depth.
-    num_filters : Can be an int or a list of ints, specifying the number of
-        filters for each block.
-        If an int, sets the number filters in the first and last convolutional
-        layer in the model, as well as of every adapt_block. Each main_block
-        doubles (halves) the number of filters for each decrease (increase) in
-        resolution.
-        If a list, specifies the number of filters for each convolution/block.
-        Must be of length 2*(num_main_blocks+num_adapt_blocks)+3.
-    short_skip : A boolean specifying whether to use ResNet-like shortcut
-        connections from the input of each block to its output. The inputs are
-        summed with the outputs.
+    num_classes : The number of classes in the segmentation output. If None,
+        no classifier will be assembled.
+    blocks : A list of tuples, each containing a block function and a
+        dictionary of keyword arguments to pass to it. The length must be
+        odd-valued. The first set of blocks before the middle one is assumed
+        to be on the downsampling (encoder) path; the second set after the
+        middle one is assumed to be on the upsampling (decoder) path.
+        If instead of a tuple, a None is passed, the corresponding block will
+        simply preserve its input, passing it onto the next block.
+    preprocessor : A block/layer/model. The model input is run through the 
+        preprocessor before being passed to the first block.
+    postprocessor : A block/layer/model. The output of the last block is passed
+        through the postprocessor before being passed to the classifier.
     long_skip : A boolean specifying whether to use UNet-like skip connections
         from the downward path to the upward path. These can either concatenate
         or sum features across.
     long_skip_merge_mode : Either 'concat' or 'sum' features across long_skip.
-    mainblock : A layer defining the mainblock (bottleneck by default).
-    adaptblock : A layer defining the adaptblock (basic_block_mp by default).
-    dropout : A float in [0, 1.], or a list of floats, specifying the dropout
-        probability, introduced in every block. If a list, sets a dropout
-        value for every adaptblock and mainblock.
-        Must be of length 2*(num_main_blocks+num_adapt_blocks)+1.
-    normalization : the normalization to apply to layers (by default: batch
-        normalization). If None, no normalization is applied.
-    norm_kwargs : keyword arguments to pass to batch norm layers. For batch
-        normalization, default momentum is 0.9.
-    weight_decay : The weight decay (L2 penalty) used in every convolution 
-        (float).
     init : A string specifying (or a function defining) the initializer for
-        layers.
+        the layers that adapt features along long skip connections.
+    weight_decay : The weight decay (L2 penalty) used in layers that adapt long
+        skip connections.
     ndim : The spatial dimensionality of the input and output (either 2 or 3).
     verbose : A boolean specifying whether to print messages about model   
         structure during construction (if True).
@@ -115,85 +93,19 @@ def assemble_model(input_shape, num_classes, num_adapt_blocks, num_main_blocks,
         channel_axis = 1
     else:
         channel_axis = -1
-    
-    '''
-    By default, use depth 2 bottleneck for mainblock
-    '''
-    if mainblock is None:
-        mainblock = bottleneck
-    if adaptblock is None:
-        adaptblock = basic_block_mp
-    
-    '''
-    main_block_depth can be a list per block or a single value 
-    -- ensure the list length is correct (if list) or convert to list
-    '''
-    if hasattr(main_block_depth, '__len__'):
-        if len(main_block_depth)!=2*num_main_blocks+1:
-            raise ValueError("main_block_depth must have " 
-                             "`2*num_main_blocks+1` values when " 
-                             "passed as a list")
-    else:
-        main_block_depth = [main_block_depth]*(2*num_main_blocks+1)
-    
-    '''
-    num_filters can be a list per convolution/block or a single value
-    -- ensure the list length is correct (if list) or convert to list
-    '''
-    if hasattr(num_filters, '__len__'):
-        if len(num_filters)!=2*(num_main_blocks+num_adapt_blocks)+3:
-            raise ValueError("num_filters must have "
-                             "`2*(num_main_blocks+num_adapt_blocks)+3` values "
-                             "when passed as a list")
-    else:
-        num_filters_list = [num_filters]*(num_adapt_blocks+1)
-        num_filters_list += [num_filters*(2**b) \
-                                             for b in range(num_main_blocks+1)]
-        num_filters_list += num_filters_list[-2::-1]
-        num_filters = num_filters_list
         
     '''
-    dropout can be passed as a scalar but must become a list for every
-    adaptblock and mainblock.
+    Block list must be of odd length.
     '''
-    if hasattr(dropout, '__len__'):
-        if len(dropout)!=2*(num_main_blocks+num_adapt_blocks)+1:
-            raise ValueError("dropout must have "
-                             "`2*(num_main_blocks+num_adapt_blocks)+1` values "
-                             "when passed as a list")
-    else:
-        dropout = [dropout]*(2*(num_main_blocks+num_adapt_blocks)+1)
-        
+    if len(blocks)%2 != 1:
+        raise ValueError('blocks list must be of odd length')
+            
     '''
     ndim must be only 2 or 3.
     '''
     if ndim not in [2, 3]:
         raise ValueError("ndim must be either 2 or 3")
-            
-    '''
-    If BatchNormalization is used and norm_kwargs is not set, set default
-    kwargs.
-    '''
-    if norm_kwargs is None:
-        if normalization == BatchNormalization:
-            norm_kwargs = {'momentum': 0.9,
-                           'scale': True,
-                           'center': True,
-                           'axis': channel_axis}
-        else:
-            norm_kwargs = {}
-            
-    '''
-    Constant kwargs passed to the init and main blocks.
-    '''
-    block_kwargs = {'skip': short_skip,
-                    'weight_decay': weight_decay,
-                    'normalization': normalization,
-                    'norm_kwargs': norm_kwargs,
-                    'nonlinearity': nonlinearity,
-                    'init': init,
-                    'ndim': ndim}
-    
+                
     '''
     Function to print if verbose==True
     '''
@@ -232,27 +144,9 @@ def assemble_model(input_shape, num_classes, num_adapt_blocks, num_main_blocks,
             """
             x, target = inputs
             
-            # Determine spatial dimensions.
-            data_format = K.image_data_format()
-            if data_format not in {'channels_first', 'channels_last'}:
-                raise ValueError("Unknown data_format {}"
-                                 "".format(str(data_format)))
-            if ndim==2:
-                if data_format=='channels_first':
-                    spatial_dims = [2, 3]
-                else:
-                    spatial_dims = [1, 2]
-                spatial_padding = K.spatial_2d_padding
-            elif ndim==3:
-                if data_format=='channels_first':
-                    spatial_dims = [2, 3, 4]
-                else:
-                    spatial_dims = [1, 2, 3]
-            else:
-                raise ValueError('ndim must be 2 or 3')
-            
             # Compute slices for cropping.
             indices = [slice(None, None)]*(ndim+2)
+            spatial_dims = set(range(ndim+2)).difference([0, channel_axis])
             for dim in spatial_dims:
                 indices[dim] = slice(0, target.shape[dim])
             
@@ -281,117 +175,53 @@ def assemble_model(input_shape, num_classes, num_adapt_blocks, num_main_blocks,
     Build all the blocks on the contracting and expanding paths.
     '''
     tensors = {}
+    preprocessor_tensor = None
+    depth = len(blocks)//2
     model_input = Input(shape=input_shape)
     
-    # Initial convolution
-    x = Convolution(filters=num_filters[0],
-                    kernel_size=3,
-                    ndim=ndim,
-                    kernel_initializer=init,
-                    padding='same',
-                    kernel_regularizer=_l2(weight_decay),
-                    name=_unique('first_conv'))(model_input)
-    tensors[0] = x
+    # Preprocessor
+    x = model_input
+    if preprocessor is not None:
+        x = preprocessor(x)
+        preprocessor_tensor = x
+        v_print("PRE - shape: {}".format(x._keras_shape))
     
-    # DOWN (initial subsampling blocks)
-    for b in range(0, num_adapt_blocks):
-        depth = b+1
-        n_filters = num_filters[1+b]
-        x = residual_block(adaptblock,
-                           filters=n_filters,
-                           repetitions=1,
-                           dropout=dropout[b],
-                           subsample=True,
-                           name=_unique('adaptblock_d'+str(b)),
-                           **block_kwargs)(x)
-        tensors[depth] = x
-        v_print("ADAPT DOWN {}: {}".format(b, x._keras_shape))
+    # Encoder (downsampling)
+    for b in range(0, depth):
+        func, kwargs = blocks[b]
+        x = func(**kwargs, subsample=True)(x)
+        tensors[b] = x
+        v_print("DOWN {} - shape: {}".format(b, x._keras_shape))
+        
+    # Bottleneck
+    func, kwargs = blocks[depth]
+    x = func(**kwargs, subsample=True, upsample=True)(x)
+    v_print("ACROSS {} - shape: {}".format(depth, x._keras_shape))
     
-    # DOWN (main blocks)
-    for b in range(0, num_main_blocks):
-        depth = b+1+num_adapt_blocks
-        n_filters = num_filters[1+num_adapt_blocks+b]
-        x = residual_block(mainblock,
-                           filters=n_filters,
-                           repetitions=main_block_depth[b],
-                           dropout=dropout[num_adapt_blocks+b],
-                           subsample=True,
-                           name=_unique('mainblock_d'+str(b)),
-                           **block_kwargs)(x)
-        tensors[depth] = x
-        if main_block_depth[b]!=0:
-            v_print("MAIN DOWN {} (depth {}): {}"
-                    "".format(b, main_block_depth[b], x._keras_shape))
-        
-    # ACROSS
-    n_filters = num_filters[1+num_adapt_blocks+num_main_blocks]
-    x = residual_block(mainblock,
-                       filters=n_filters,
-                       repetitions=main_block_depth[num_main_blocks],
-                       dropout=dropout[num_adapt_blocks+num_main_blocks],
-                       subsample=True,
-                       upsample=True,
-                       name=_unique('mainblock_a'),
-                       **block_kwargs)(x) 
-    if main_block_depth[num_main_blocks]!=0:
-        v_print("ACROSS (depth {}): {}"
-                "".format(main_block_depth[num_main_blocks], x._keras_shape))
-
-    # UP (main blocks)
-    for b in range(num_main_blocks-1, -1, -1):
-        depth = b+1+num_adapt_blocks
-        n_filters = num_filters[-1-1-num_adapt_blocks-b]
+    # Decoder (upsampling)
+    for b in range(0, depth):
         if long_skip:
+            concat_x = tensors[depth-b-1]
+            n_filters = concat_x._keras_shape[channel_axis]
             x = make_long_skip(prev_x=x,
-                               concat_x=tensors[depth],
+                               concat_x=concat_x,
                                num_target_filters=n_filters,
-                               name=_unique('concat_main_'+str(b)))
-        x = residual_block(mainblock,
-                           filters=n_filters,
-                           repetitions=main_block_depth[-b-1],
-                           dropout=dropout[-num_adapt_blocks-b-1],
-                           upsample=True,
-                           name=_unique('mainblock_u'+str(b)),
-                           **block_kwargs)(x)
-        if main_block_depth[-b-1]!=0:
-            v_print("MAIN UP {} (depth {}): {}"
-                    "".format(b, main_block_depth[-b-1], x._keras_shape))
+                               name=_unique('long_skip_{}'.format(depth-b-1)))
+        func, kwargs = blocks[depth+b+1]
+        x = func(**kwargs, upsample=True)(x)
+        v_print("UP {} - shape: {}".format(depth-b-1, x._keras_shape))
         
-    # UP (final upsampling blocks)
-    for b in range(num_adapt_blocks-1, -1, -1):
-        depth = b+1
-        n_filters = num_filters[-1-1-b]
-        if long_skip:
-            x = make_long_skip(prev_x=x,
-                               concat_x=tensors[depth],
-                               num_target_filters=n_filters,
-                               name=_unique('concat_init_'+str(b)))
-        x = residual_block(adaptblock,
-                           filters=n_filters,
-                           repetitions=1,
-                           dropout=dropout[-b-1],
-                           upsample=True,
-                           name=_unique('adaptblock_u'+str(b)),
-                           **block_kwargs)(x)
-        v_print("ADAPT UP {}: {}".format(b, x._keras_shape))
-        
-    # Final convolution
-    if long_skip:
+    # Skip from preprocessor output to postprocessor input.
+    if long_skip and preprocessor_tensor is not None:
+        n_filters = preprocessor_tensor._keras_shape[channel_axis]
         x = make_long_skip(prev_x=x,
-                           concat_x=tensors[0],
-                           num_target_filters=num_filters[-1],
-                           name=_unique('concat_top'))
-    x = Convolution(filters=num_filters[-1],
-                    kernel_size=3,
-                    ndim=ndim,
-                    kernel_initializer=init,
-                    padding='same',
-                    kernel_regularizer=_l2(weight_decay),
-                    name=_unique('final_conv'))(x)
-    
-    if normalization is not None:
-        x = normalization(**norm_kwargs)(x)
-    x = get_nonlinearity(nonlinearity)(x)
+                           concat_x=preprocessor_tensor,
+                           num_target_filters=n_filters,
+                           name=_unique('long_skip_top'))
+        
+    # Postprocessor
+    if postprocessor is not None:
+        x = postprocessor(x)
     
     # OUTPUT (SOFTMAX)
     if num_classes is not None:
@@ -423,4 +253,329 @@ def assemble_model(input_shape, num_classes, num_adapt_blocks, num_main_blocks,
     # MODEL
     model = Model(inputs=model_input, outputs=output)
 
+    return model
+
+
+def assemble_unet(input_shape, num_classes, init_num_filters=64,
+                  num_pooling=4, short_skip=False, long_skip=True,
+                  long_skip_merge_mode='concat', dropout=0.,
+                  normalization=None, norm_kwargs=None,
+                  weight_decay=None, init='he_normal', nonlinearity='relu',
+                  ndim=2, verbose=True):
+    """
+    input_shape : A tuple specifiying the 2D image input shape.
+    num_classes : The number of classes in the segmentation output.
+    init_num_filters : The number of filters in the first pair and last pair
+        of convolutions in the network. With every downsampling, the number of
+        filters is doubled; with every upsampling, it is halved.
+    num_pooling : The number of pooling (and thus upsampling) operations to 
+        perform in the network.
+    short_skip : A boolean specifying whether to use ResNet-like shortcut
+        connections from the input of each block to its output. The inputs are
+        summed with the outputs.
+    long_skip : A boolean specifying whether to use UNet-like skip connections
+        from the downward path to the upward path. These can either concatenate
+        or sum features across.
+    long_skip_merge_mode : Either 'concat' or 'sum' features across long_skip.
+    dropout : A float in [0, 1.] specifying the dropout probability in the 
+        bottleneck and in the first subsequent block, as in the UNet.
+    normalization : The normalization to apply to layers (none by default).
+        Recommended to pass keras's BatchNormalization when using 
+        short_skip==True.
+    norm_kwargs : Keyword arguments to pass to normalization layers. If using
+        BatchNormalization, kwargs are autoset with a momentum of 0.9.
+    weight_decay : The weight decay (L2 penalty) used in every convolution 
+        (float).
+    init : A string specifying (or a function defining) the initializer for
+        layers.
+    nonlinearity : The nonlinearity to use, passed as a string or a function.
+    ndim : The spatial dimensionality of the input and output (either 2 or 3).
+    verbose : A boolean specifying whether to print messages about model   
+        structure during construction (if True).
+    """
+    
+    '''
+    Determine channel axis.
+    '''
+    data_format = K.image_data_format()
+    if data_format not in {'channels_first', 'channels_last'}:
+        raise ValueError('Unknown data_format ' + str(data_format))
+    if data_format=='channels_first':
+        channel_axis = 1
+    else:
+        channel_axis = -1
+    
+    '''
+    ndim must be only 2 or 3.
+    '''
+    if ndim not in [2, 3]:
+        raise ValueError("ndim must be either 2 or 3")
+            
+    '''
+    If BatchNormalization is used and norm_kwargs is not set, set default
+    kwargs.
+    '''
+    if norm_kwargs is None:
+        if normalization == BatchNormalization:
+            norm_kwargs = {'momentum': 0.9,
+                           'scale': True,
+                           'center': True,
+                           'axis': channel_axis}
+        else:
+            norm_kwargs = {}
+            
+    '''
+    Constant kwargs passed to the init and main blocks.
+    '''
+    block_kwargs = {'skip': short_skip,
+                    'weight_decay': weight_decay,
+                    'normalization': normalization,
+                    'norm_kwargs': norm_kwargs,
+                    'nonlinearity': nonlinearity,
+                    'init': init,
+                    'ndim': ndim}
+    
+    '''
+    No sub/up-sampling at beginning, end.
+    '''
+    preprocessor = unet_block(filters=init_num_filters, **block_kwargs)
+    postprocessor = unet_block(filters=init_num_filters, **block_kwargs)
+    
+    '''
+    Assemble all necessary blocks.
+    '''
+    blocks_down = []
+    blocks_across = []
+    blocks_up = []
+    for i in range(1, num_pooling):
+        kwargs = {'filters': init_num_filters*(2**i)}
+        kwargs.update(block_kwargs)
+        blocks_down.append((unet_block, kwargs))
+    kwargs = {'filters': init_num_filters*(2**num_pooling),
+              'dropout': dropout}
+    kwargs.update(block_kwargs)
+    blocks_across.append((unet_block, kwargs))
+    for i in range(num_pooling-1, 0, -1):
+        kwargs = {'filters': init_num_filters*(2**i)}
+        if i==num_pooling-1:
+            kwargs['dropout'] = dropout
+        kwargs.update(block_kwargs)
+        blocks_up.append((unet_block, kwargs))
+    blocks = blocks_down + blocks_across + blocks_up
+    
+    '''
+    Assemble model.
+    '''
+    model = assemble_model(input_shape=input_shape,
+                           num_classes=num_classes,
+                           blocks=blocks,
+                           preprocessor=preprocessor,
+                           postprocessor=postprocessor,
+                           long_skip=long_skip,
+                           long_skip_merge_mode=long_skip_merge_mode,
+                           ndim=ndim,
+                           verbose=verbose)
+    return model
+
+
+def assemble_resunet(input_shape, num_classes, num_init_blocks,
+                     num_main_blocks, main_block_depth, init_num_filters,
+                     short_skip=True, long_skip=True,
+                     long_skip_merge_mode='concat',
+                     main_block=None, init_block=None, dropout=0.,
+                     normalization=BatchNormalization, norm_kwargs=None,
+                     weight_decay=None, init='he_normal', nonlinearity='relu',
+                     ndim=2, verbose=True):
+    """
+    input_shape : A tuple specifiying the 2D image input shape.
+    num_classes : The number of classes in the segmentation output.
+    num_init_blocks : The number of blocks of type init_block, above 
+        main_blocks. These blocks always have the same number of channels as
+        the first convolutional layer in the model. There are `num_init_blocks`
+        of these at both the beginning and the end of the network.
+    num_main_blocks : The number of blocks of type main_block, below
+        init_blocks. These blocks double (halve) the number of channels at each
+        downsampling (upsampling) after the first main_block. There are
+        `num_main_blocks` of these both in the encoder and the decoder, on
+        either side of the bottleneck.
+    main_block_depth : An integer or list of integers specifying the number of
+        repetitions of each main_block. A list must contain 2*num_main_blocks+1
+        values (there are num_main_blocks on the contracting path and on the 
+        expanding path, as well as as one on the across path). Zero is a valid
+        depth.
+    init_num_filters : The number of filters in the first and last
+        convolutions (preprocessor, postprocessor). Also the number of filters
+        in every init_block. Each main_block doubles (halves) the number of 
+        filters for each decrease (increase) in resolution.
+    short_skip : A boolean specifying whether to use ResNet-like shortcut
+        connections from the input of each block to its output. The inputs are
+        summed with the outputs.
+    long_skip : A boolean specifying whether to use UNet-like skip connections
+        from the downward path to the upward path. These can either concatenate
+        or sum features across.
+    long_skip_merge_mode : Either 'concat' or 'sum' features across long_skip.
+    main_block : A layer defining the main_block (bottleneck by default).
+    init_block : A layer defining the init_block (basic_block_mp by default).
+    dropout : A float [0, 1] specifying the dropout probability, introduced in
+        every block.
+    normalization : the normalization to apply to layers (by default: batch
+        normalization). If None, no normalization is applied.
+    norm_kwargs : keyword arguments to pass to batch norm layers. For batch
+        normalization, default momentum is 0.9.
+    weight_decay : The weight decay (L2 penalty) used in every convolution 
+        (float).
+    init : A string specifying (or a function defining) the initializer for
+        layers.
+    ndim : The spatial dimensionality of the input and output (either 2 or 3).
+    verbose : A boolean specifying whether to print messages about model   
+        structure during construction (if True).
+    """
+    
+    '''
+    Determine channel axis.
+    '''
+    data_format = K.image_data_format()
+    if data_format not in {'channels_first', 'channels_last'}:
+        raise ValueError('Unknown data_format ' + str(data_format))
+    if data_format=='channels_first':
+        channel_axis = 1
+    else:
+        channel_axis = -1
+    
+    '''
+    By default, use depth 2 bottleneck for main_block
+    '''
+    if main_block is None:
+        main_block = bottleneck
+    if init_block is None:
+        init_block = basic_block_mp
+    
+    '''
+    main_block_depth can be a list per block or a single value 
+    -- ensure the list length is correct (if list) or convert to list
+    '''
+    if hasattr(main_block_depth, '__len__'):
+        if len(main_block_depth)!=2*num_main_blocks+1:
+            raise ValueError("main_block_depth must have " 
+                             "`2*num_main_blocks+1` values when " 
+                             "passed as a list")
+    else:
+        main_block_depth = [main_block_depth]*(2*num_main_blocks+1)
+        
+    '''
+    ndim must be only 2 or 3.
+    '''
+    if ndim not in [2, 3]:
+        raise ValueError("ndim must be either 2 or 3")
+            
+    '''
+    If BatchNormalization is used and norm_kwargs is not set, set default
+    kwargs.
+    '''
+    if norm_kwargs is None:
+        if normalization == BatchNormalization:
+            norm_kwargs = {'momentum': 0.9,
+                           'scale': True,
+                           'center': True,
+                           'axis': channel_axis}
+        else:
+            norm_kwargs = {}
+            
+    '''
+    Constant kwargs passed to the init and main blocks.
+    '''
+    block_kwargs = {'skip': short_skip,
+                    'dropout': dropout,
+                    'weight_decay': weight_decay,
+                    'normalization': normalization,
+                    'norm_kwargs': norm_kwargs,
+                    'nonlinearity': nonlinearity,
+                    'init': init,
+                    'ndim': ndim}
+    
+    '''
+    Single convolution as preprocessor.
+    '''
+    preprocessor = Convolution(filters=init_num_filters,
+                               kernel_size=3,
+                               ndim=ndim,
+                               kernel_initializer=init,
+                               padding='same',
+                               kernel_regularizer=_l2(weight_decay))
+    
+    '''
+    Norm + nonlin + conv as postprocessor.
+    '''
+    def _postprocessor(x):
+        out = normalization(**norm_kwargs)(x)
+        out = get_nonlinearity(nonlinearity)(out)
+        out = Convolution(filters=init_num_filters,
+                          kernel_size=3,
+                          ndim=ndim,
+                          kernel_initializer=init,
+                          padding='same',
+                          kernel_regularizer=_l2(weight_decay))(out)
+        return out
+    postprocessor = _postprocessor
+    
+    '''
+    Assemble all necessary blocks.
+    '''
+    blocks_down = []
+    blocks_across = []
+    blocks_up = []
+    
+    # Down, init_block
+    for i in range(num_init_blocks):
+        kwargs = {'block_function': init_block,
+                  'filters': init_num_filters,
+                  'repetitions': 1}
+        kwargs.update(block_kwargs)
+        blocks_down.append((residual_block, kwargs))
+        
+    # Down, main_block
+    for i in range(num_main_blocks):
+        kwargs = {'block_function': main_block,
+                  'filters': init_num_filters*(2**i),
+                  'repetitions': main_block_depth[i]}
+        kwargs.update(block_kwargs)
+        blocks_down.append((residual_block, kwargs))
+        
+    # Bottleneck, main_block
+    kwargs = {'block_function': main_block,
+              'filters': init_num_filters*(2**num_main_blocks),
+              'repetitions': main_block_depth[num_main_blocks]}
+    kwargs.update(block_kwargs)
+    blocks_across.append((residual_block, kwargs))
+    
+    # Up, main_block
+    for i in range(num_main_blocks-1, -1, -1):
+        kwargs = {'block_function': main_block,
+                  'filters': init_num_filters*(2**i),
+                  'repetitions': main_block_depth[i]}
+        kwargs.update(block_kwargs)
+        blocks_up.append((residual_block, kwargs))
+    
+    # Up, init_block
+    for i in range(num_init_blocks):
+        kwargs = {'block_function': init_block,
+                  'filters': init_num_filters,
+                  'repetitions': 1}
+        kwargs.update(block_kwargs)
+        blocks_up.append((residual_block, kwargs))
+        
+    blocks = blocks_down + blocks_across + blocks_up
+    
+    '''
+    Assemble model.
+    '''
+    model = assemble_model(input_shape=input_shape,
+                           num_classes=num_classes,
+                           blocks=blocks,
+                           preprocessor=preprocessor,
+                           postprocessor=postprocessor,
+                           long_skip=long_skip,
+                           long_skip_merge_mode=long_skip_merge_mode,
+                           ndim=ndim,
+                           verbose=verbose)
     return model

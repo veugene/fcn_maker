@@ -313,7 +313,38 @@ def basic_block_mp(filters, subsample=False, upsample=False, skip=True,
 
 
 """
-A single basic 3x3 convolution with 2x2 conv upsampling, as in the UNet.
+Builds a residual block with repeating sub-blocks.
+"""
+def residual_block(block_function, filters, repetitions, skip=True,
+                   dropout=0., subsample=False, upsample=False,
+                   normalization=BatchNormalization, weight_decay=None,
+                   norm_kwargs=None, init='he_normal', nonlinearity='relu',
+                   ndim=2, name=None):
+    def f(input):
+        x = input
+        for i in range(repetitions):
+            subsample_i = subsample if i==0 else False
+            upsample_i = upsample if i==repetitions-1 else False
+            x = block_function(filters=filters,
+                               skip=skip,
+                               dropout=dropout,
+                               subsample=subsample_i,
+                               upsample=upsample_i,
+                               normalization=normalization,
+                               norm_kwargs=norm_kwargs,
+                               weight_decay=weight_decay,
+                               nonlinearity=nonlinearity,
+                               init=init,
+                               ndim=ndim,
+                               name=name)(x)
+        return x
+
+    return f 
+
+
+"""
+Two basic 3x3 convolutions with 2x2 conv upsampling, as in the UNet.
+Subsampling, upsampling, and dropout handled as in the UNet.
 """
 def unet_block(filters, subsample=False, upsample=False, skip=True,
                dropout=0., normalization=BatchNormalization, 
@@ -348,8 +379,9 @@ def unet_block(filters, subsample=False, upsample=False, skip=True,
         if dropout > 0:
             output = Dropout(dropout)(output)
         if upsample:
+            # "up-convolution" also halves the number of feature maps.
             output = UpSampling(size=2, ndim=ndim)(output)
-            output = Convolution(filters=filters,
+            output = Convolution(filters=filters//2,
                                  kernel_size=2,
                                  ndim=ndim,
                                  kernel_initializer=init,
@@ -368,33 +400,3 @@ def unet_block(filters, subsample=False, upsample=False, skip=True,
         return output
 
     return f
-
-
-"""
-Builds a residual block with repeating sub-blocks.
-"""
-def residual_block(block_function, filters, repetitions, skip=True,
-                   dropout=0., subsample=False, upsample=False,
-                   normalization=BatchNormalization, weight_decay=None,
-                   norm_kwargs=None, init='he_normal', nonlinearity='relu',
-                   ndim=2, name=None):
-    def f(input):
-        x = input
-        for i in range(repetitions):
-            subsample_i = subsample if i==0 else False
-            upsample_i = upsample if i==repetitions-1 else False
-            x = block_function(filters=filters,
-                               skip=skip,
-                               dropout=dropout,
-                               subsample=subsample_i,
-                               upsample=upsample_i,
-                               normalization=normalization,
-                               norm_kwargs=norm_kwargs,
-                               weight_decay=weight_decay,
-                               nonlinearity=nonlinearity,
-                               init=init,
-                               ndim=ndim,
-                               name=name)(x)
-        return x
-
-    return f 

@@ -73,7 +73,7 @@ def assemble_model(input_shape, num_classes, blocks, preprocessor=None,
     long_skip : A boolean specifying whether to use UNet-like skip connections
         from the downward path to the upward path. These can either concatenate
         or sum features across.
-    long_skip_merge_mode : Either 'concat' or 'sum' features across long_skip.
+    long_skip_merge_mode : Either or 'sum', 'concat' features across skip.
     init : A string specifying (or a function defining) the initializer for
         the layers that adapt features along long skip connections.
     weight_decay : The weight decay (L2 penalty) used in layers that adapt long
@@ -118,8 +118,9 @@ def assemble_model(input_shape, num_classes, blocks, preprocessor=None,
     '''
     Helper function to create a long skip connection with concatenation.
     '''
-    def make_long_skip(prev_x, concat_x, num_target_filters, name=None):
+    def make_long_skip(prev_x, concat_x, name=None):
         if long_skip_merge_mode == 'sum':
+            num_target_filters = concat_x._keras_shape[channel_axis]
             if prev_x._keras_shape[channel_axis] != num_target_filters:
                 prev_x = Convolution(filters=num_target_filters,
                                      kernel_size=1,
@@ -128,14 +129,6 @@ def assemble_model(input_shape, num_classes, blocks, preprocessor=None,
                                      padding='valid',
                                      kernel_regularizer=_l2(weight_decay),
                                      name=_unique(name+'_prev'))(prev_x)
-            if concat_x._keras_shape[channel_axis] != num_target_filters:
-                concat_x = Convolution(filters=num_target_filters,
-                                       kernel_size=1,
-                                       ndim=ndim,
-                                       kernel_initializer=init,
-                                       padding='valid',
-                                       kernel_regularizer=_l2(weight_decay),
-                                       name=_unique(name+'_concat'))(concat_x)
         
         def _crop_to_fit(inputs):
             """
@@ -164,7 +157,7 @@ def assemble_model(input_shape, num_classes, blocks, preprocessor=None,
         # Merge.
         if long_skip_merge_mode=='sum':
             merged = add([prev_x, concat_x])
-        elif long_skip_merge_mode=='concat':
+        elif long_skip_merge_mode == 'concat':
             merged = concatenate([prev_x, concat_x], axis=channel_axis)
         else:
             raise ValueError("Unrecognized merge mode: {}"
@@ -205,7 +198,6 @@ def assemble_model(input_shape, num_classes, blocks, preprocessor=None,
             n_filters = concat_x._keras_shape[channel_axis]
             x = make_long_skip(prev_x=x,
                                concat_x=concat_x,
-                               num_target_filters=n_filters,
                                name=_unique('long_skip_{}'.format(depth-b-1)))
         func, kwargs = blocks[depth+b+1]
         x = func(**kwargs, upsample=True)(x)
@@ -216,7 +208,6 @@ def assemble_model(input_shape, num_classes, blocks, preprocessor=None,
         n_filters = preprocessor_tensor._keras_shape[channel_axis]
         x = make_long_skip(prev_x=x,
                            concat_x=preprocessor_tensor,
-                           num_target_filters=n_filters,
                            name=_unique('long_skip_top'))
         
     # Postprocessor
@@ -276,7 +267,7 @@ def assemble_unet(input_shape, num_classes, init_num_filters=64,
     long_skip : A boolean specifying whether to use UNet-like skip connections
         from the downward path to the upward path. These can either concatenate
         or sum features across.
-    long_skip_merge_mode : Either 'concat' or 'sum' features across long_skip.
+    long_skip_merge_mode : Either or 'sum', 'concat' features across skip.
     dropout : A float in [0, 1.] specifying the dropout probability in the 
         bottleneck and in the first subsequent block, as in the UNet.
     normalization : The normalization to apply to layers (none by default).
@@ -413,7 +404,7 @@ def assemble_resunet(input_shape, num_classes, num_init_blocks,
     long_skip : A boolean specifying whether to use UNet-like skip connections
         from the downward path to the upward path. These can either concatenate
         or sum features across.
-    long_skip_merge_mode : Either 'concat' or 'sum' features across long_skip.
+    long_skip_merge_mode : Either or 'sum', 'concat' features across skip.
     main_block : A layer defining the main_block (bottleneck by default).
     init_block : A layer defining the init_block (basic_block_mp by default).
     dropout : A float [0, 1] specifying the dropout probability, introduced in

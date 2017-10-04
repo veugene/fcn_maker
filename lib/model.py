@@ -272,8 +272,8 @@ def assemble_resunet(input_shape, num_classes, num_init_blocks,
     main_block_depth : An integer or list of integers specifying the number of
         repetitions of each main_block. A list must contain 2*num_main_blocks+1
         values (there are num_main_blocks on the contracting path and on the 
-        expanding path, as well as as one on the across path). Zero is a valid
-        depth.
+        expanding path, as well as as one on the across path). Zero is not a
+        valid depth.
     init_num_filters : The number of filters in the first and last
         convolutions (preprocessor, postprocessor). Also the number of filters
         in every init_block. Each main_block doubles (halves) the number of 

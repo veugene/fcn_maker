@@ -406,6 +406,9 @@ def residual_block(block_function, filters, repetitions, skip=True,
                    upsample_mode='repeat', normalization=BatchNormalization,
                    weight_decay=None, norm_kwargs=None, init='he_normal',
                    nonlinearity='relu', ndim=2, name=None):
+    if repetitions<=0:
+        raise ValueError("block repetitions (block depth) must be greater than "
+                         "zero")
     def f(input):
         x = input
         for i in range(repetitions):

@@ -74,7 +74,7 @@ def assemble_model(input_shape, num_classes, blocks, preprocessor=None,
         preprocessor before being passed to the first block.
     postprocessor : A block/layer/model. The output of the last block is passed
         through the postprocessor before being passed to the classifier.
-    long_skip : A boolean specifying whether to use UNet-like skip connections
+    long_skip : A boolean specifying whether to use long skip connections
         from the downward path to the upward path. These can either concatenate
         or sum features across.
     long_skip_merge_mode : Either or 'sum', 'concat' features across skip.
@@ -283,7 +283,7 @@ def assemble_resunet(input_shape, num_classes, num_init_blocks,
     short_skip : A boolean specifying whether to use ResNet-like shortcut
         connections from the input of each block to its output. The inputs are
         summed with the outputs.
-    long_skip : A boolean specifying whether to use UNet-like skip connections
+    long_skip : A boolean specifying whether to use long skip connections
         from the downward path to the upward path. These can either concatenate
         or sum features across.
     long_skip_merge_mode : Either or 'sum', 'concat' features across skip.
@@ -476,7 +476,7 @@ def assemble_unet(input_shape, num_classes, init_num_filters=64,
     short_skip : A boolean specifying whether to use ResNet-like shortcut
         connections from the input of each block to its output. The inputs are
         summed with the outputs.
-    long_skip : A boolean specifying whether to use UNet-like skip connections
+    long_skip : A boolean specifying whether to use long skip connections
         from the downward path to the upward path. These can either concatenate
         or sum features across.
     long_skip_merge_mode : Either or 'sum', 'concat' features across skip.
@@ -603,15 +603,14 @@ def assemble_vnet(input_shape, num_classes, init_num_filters=32,
     short_skip : A boolean specifying whether to use ResNet-like shortcut
         connections from the input of each block to its output. The inputs are
         summed with the outputs.
-    long_skip : A boolean specifying whether to use VNet-like skip connections
+    long_skip : A boolean specifying whether to use long skip connections
         from the downward path to the upward path. These can either concatenate
         or sum features across.
     long_skip_merge_mode : Either or 'sum', 'concat' features across skip.
     upsample_mode : Either 'repeat' or 'conv'. With 'repeat', rows and colums
         are repeated as in nearest neighbour interpolation. With 'conv',
         upscaling is done via transposed convolution.
-    dropout : A float in [0, 1.] specifying the dropout probability in the 
-        bottleneck and in the first subsequent block, as in the VNet.
+    dropout : A float in [0, 1.], specifying dropout probability.
     normalization : The normalization to apply to layers (none by default).
         Recommended to pass keras's BatchNormalization when using 
         short_skip==True.

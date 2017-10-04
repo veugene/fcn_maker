@@ -12,6 +12,7 @@ from keras.layers.convolutional import (Conv2D,
                                         MaxPooling3D,
                                         UpSampling2D,
                                         UpSampling3D)
+from keras.initializers import VarianceScaling
 from keras.regularizers import l2
 from keras import backend as K
 
@@ -86,6 +87,32 @@ def _get_unique_name(name, prefix=None):
 
 
 """
+Helper function to execute some upsampling mode.
+
+conv_kwargs are:
+filters : num filters
+init : kernel_initializer
+weight_decay : kernel_regularizer (l2)
+"""
+def _upsample(x, mode, ndim, **conv_kwargs):
+    if mode=='repeat':
+        x = UpSampling(size=2, ndim=ndim)(x)
+    elif mode=='conv':
+        x = ConvolutionTranspose(filters=filters,
+                                 kernel_size=2,
+                                 ndim=ndim,
+                                 strides=2,
+                                 kernel_initializer=init,
+                                 padding='valid',
+                                 kernel_regularizer=_l2(weight_decay),
+                                 name=name+"_upconv")(x)
+    else:
+        raise ValueError("Unrecognized upsample_mode: {}"
+                            "".format(upsample_mode))
+    return x
+
+
+"""
 Helper to build a norm -> relu -> conv block
 This is an improved scheme proposed in http://arxiv.org/pdf/1603.05027v2.pdf
 """
@@ -107,21 +134,13 @@ def _norm_relu_conv(filters, kernel_size, subsample=False, upsample=False,
         if subsample:
             stride = 2
         if upsample:
-            if upsample_mode=='repeat':
-                processed = UpSampling(size=2, ndim=ndim)(processed)
-            elif upsample_mode=='conv':
-                processed = ConvolutionTranspose( \
-                                          filters=filters,
-                                          kernel_size=2,
-                                          strides=2,
-                                          kernel_initializer=init,
-                                          padding='valid',
-                                          kernel_regularizer=_l2(weight_decay),
-                                          name=name+"_upconv")(processed)
-            else:
-                raise ValueError("Unrecognized upsample_mode: {}"
-                                 "".format(upsample_mode))
-                
+            processed = _upsample(processed,
+                                  mode=upsample_mode,
+                                  ndim=ndim,
+                                  filters=filters,
+                                  init=init,
+                                  weight_decay=weight_decay,
+                                  name=name+"_upconv")(processed)
         return Convolution(filters=filters, kernel_size=kernel_size, ndim=ndim,
                            strides=stride,
                            kernel_initializer=init,
@@ -174,7 +193,13 @@ def _shortcut(input, residual, subsample, upsample, weight_decay=None,
         
     # Upsample input
     if upsample:
-        shortcut = UpSampling(size=2, ndim=ndim)(shortcut)
+        shortcut = _upsample(shortcut,
+                             mode=upsample_mode,
+                             ndim=ndim,
+                             filters=filters,
+                             kernel_initializer=init,
+                             kernel_regularizer=_l2(weight_decay),
+                             name=name+"_upconv")
         
     # Expand channels of shortcut to match residual.
     # Stride appropriately to match residual (width, height)
@@ -331,20 +356,13 @@ def basic_block_mp(filters, subsample=False, upsample=False,
             else:
                 output = Dropout(dropout)(output)
         if upsample:
-            if upsample_mode=='repeat':
-                output = UpSampling(size=2, ndim=ndim)(output)
-            elif upsample_mode=='conv':
-                output = ConvolutionTranspose( \
-                                          filters=filters,
-                                          kernel_size=2,
-                                          strides=2,
-                                          kernel_initializer=init,
-                                          padding='valid',
-                                          kernel_regularizer=_l2(weight_decay),
-                                          name=name+"_upconv")(output)
-            else:
-                raise ValueError("Unrecognized upsample_mode: {}"
-                                 "".format(upsample_mode))
+            output = _upsample(output,
+                               mode=upsample_mode,
+                               ndim=ndim,
+                               filters=filters,
+                               init=init,
+                               weight_decay=weight_decay,
+                               name=name+"_upconv")
             
         if skip:
             output = _shortcut(input, output,
@@ -391,10 +409,10 @@ def residual_block(block_function, filters, repetitions, skip=True,
 Two basic 3x3 convolutions with 2x2 conv upsampling, as in the UNet.
 Subsampling, upsampling, and dropout handled as in the UNet.
 """
-def unet_block(filters, subsample=False, upsample=False, skip=True,
-               dropout=0., normalization=BatchNormalization, 
-               weight_decay=None, norm_kwargs=None, init='he_normal',
-               nonlinearity='relu', ndim=2, name=None):
+def unet_block(filters, subsample=False, upsample=False, upsample_mode='conv',
+               skip=False, dropout=0., normalization=None, weight_decay=None,
+               norm_kwargs=None, init='he_normal', nonlinearity='relu', ndim=3,
+               name=None):
     name = _get_unique_name('unet_block', name)
     if norm_kwargs is None:
         norm_kwargs = {}
@@ -425,13 +443,13 @@ def unet_block(filters, subsample=False, upsample=False, skip=True,
             output = Dropout(dropout)(output)
         if upsample:
             # "up-convolution" also halves the number of feature maps.
-            output = ConvolutionTranspose(filters=filters//2,
-                                          kernel_size=2,
-                                          strides=2,
-                                          kernel_initializer=init,
-                                          padding='valid',
-                                          kernel_regularizer=_l2(weight_decay),
-                                          name=name+"_upconv")(output)
+            output = _upsample(output,
+                               mode=upsample_mode,
+                               ndim=ndim,
+                               filters=filters//2,
+                               init=init,
+                               weight_decay=weight_decay,
+                               name=name+"_upconv")
             output = get_nonlinearity(nonlinearity)(output)
         if skip:
             output = _shortcut(input, output,
@@ -441,6 +459,67 @@ def unet_block(filters, subsample=False, upsample=False, skip=True,
                                init=init,
                                ndim=ndim,
                                name=name)
+        return output
+
+    return f
+
+
+"""
+Processing block as in the VNet.
+"""
+def vnet_block(filters, num_conv=3, subsample=False, upsample=False,
+               upsample_mode='conv', skip=True, dropout=0., normalization=None,
+               norm_kwargs=None,
+               init=VarianceScaling(scale=3., mode='fan_avg'),
+               weight_decay=None, nonlinearity='relu', ndim=3, name=None):
+    name = _get_unique_name('vnet_block', name)
+    if norm_kwargs is None:
+        norm_kwargs = {}
+    def f(input):
+        output = input
+        if subsample:
+            output = Convolution(filters=filters,
+                                 kernel_size=2,
+                                 strides=2,
+                                 ndim=ndim,
+                                 kernel_initializer=init,
+                                 padding='same',
+                                 kernel_regularizer=_l2(weight_decay),
+                                 name=name+"_downconv")(output)
+        for i in range(num_conv):
+            output = _norm_relu_conv(filters,
+                                     kernel_size=5,
+                                     normalization=normalization,
+                                     weight_decay=weight_decay,
+                                     norm_kwargs=norm_kwargs,
+                                     init=init,
+                                     nonlinearity=nonlinearity,
+                                     ndim=ndim,
+                                     name=name)(output)
+        
+            if dropout > 0:
+                output = Dropout(dropout)(output)
+        if skip:
+            output = _shortcut(input, output,
+                               subsample=subsample,
+                               upsample=False,
+                               weight_decay=weight_decay,
+                               init=init,
+                               ndim=ndim,
+                               name=name)
+        if upsample:
+            # "up-convolution" also halves the number of feature maps.
+            if normalization is not None:
+                output = normalization(name=name+"_norm", **norm_kwargs)(output)
+            output = get_nonlinearity(nonlinearity)(output)
+            output = _upsample(output,
+                               mode=upsample_mode,
+                               ndim=ndim,
+                               filters=filters//2,
+                               init=init,
+                               weight_decay=weight_decay,
+                               name=name+"_upconv")(output)
+            output = get_nonlinearity(nonlinearity)(output)
         return output
 
     return f

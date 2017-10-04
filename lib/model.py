@@ -9,14 +9,16 @@ from keras.layers import (Input,
 from keras.layers.normalization import BatchNormalization
 from keras import backend as K
 from keras.regularizers import l2
+from keras.initializers import VarianceScaling
 import numpy as np
-from .blocks import (bottleneck,
+from .blocks import (Convolution,
+                     get_nonlinearity,
+                     bottleneck,
                      basic_block,
                      basic_block_mp,
                      residual_block,
                      unet_block,
-                     Convolution,
-                     get_nonlinearity)
+                     vnet_block)
 
 
 def _l2(decay):
@@ -56,7 +58,7 @@ def assemble_model(input_shape, num_classes, blocks, preprocessor=None,
                    long_skip_merge_mode='concat', init='he_normal',
                    weight_decay=0.0001, ndim=2, verbose=True):
     """
-    input_shape : A tuple specifiying the 2D image input shape.
+    input_shape : A tuple specifiying the image input shape.
     num_classes : The number of classes in the segmentation output. If None,
         no classifier will be assembled.
     blocks : A list of tuples, each containing a block function and a
@@ -247,128 +249,6 @@ def assemble_model(input_shape, num_classes, blocks, preprocessor=None,
     return model
 
 
-def assemble_unet(input_shape, num_classes, init_num_filters=64,
-                  num_pooling=4, short_skip=False, long_skip=True,
-                  long_skip_merge_mode='concat', dropout=0.,
-                  normalization=None, norm_kwargs=None,
-                  weight_decay=None, init='he_normal', nonlinearity='relu',
-                  ndim=2, verbose=True):
-    """
-    input_shape : A tuple specifiying the 2D image input shape.
-    num_classes : The number of classes in the segmentation output.
-    init_num_filters : The number of filters in the first pair and last pair
-        of convolutions in the network. With every downsampling, the number of
-        filters is doubled; with every upsampling, it is halved.
-    num_pooling : The number of pooling (and thus upsampling) operations to 
-        perform in the network.
-    short_skip : A boolean specifying whether to use ResNet-like shortcut
-        connections from the input of each block to its output. The inputs are
-        summed with the outputs.
-    long_skip : A boolean specifying whether to use UNet-like skip connections
-        from the downward path to the upward path. These can either concatenate
-        or sum features across.
-    long_skip_merge_mode : Either or 'sum', 'concat' features across skip.
-    dropout : A float in [0, 1.] specifying the dropout probability in the 
-        bottleneck and in the first subsequent block, as in the UNet.
-    normalization : The normalization to apply to layers (none by default).
-        Recommended to pass keras's BatchNormalization when using 
-        short_skip==True.
-    norm_kwargs : Keyword arguments to pass to normalization layers. If using
-        BatchNormalization, kwargs are autoset with a momentum of 0.9.
-    weight_decay : The weight decay (L2 penalty) used in every convolution 
-        (float).
-    init : A string specifying (or a function defining) the initializer for
-        layers.
-    nonlinearity : The nonlinearity to use, passed as a string or a function.
-    ndim : The spatial dimensionality of the input and output (either 2 or 3).
-    verbose : A boolean specifying whether to print messages about model   
-        structure during construction (if True).
-    """
-    
-    '''
-    Determine channel axis.
-    '''
-    data_format = K.image_data_format()
-    if data_format not in {'channels_first', 'channels_last'}:
-        raise ValueError('Unknown data_format ' + str(data_format))
-    if data_format=='channels_first':
-        channel_axis = 1
-    else:
-        channel_axis = -1
-    
-    '''
-    ndim must be only 2 or 3.
-    '''
-    if ndim not in [2, 3]:
-        raise ValueError("ndim must be either 2 or 3")
-            
-    '''
-    If BatchNormalization is used and norm_kwargs is not set, set default
-    kwargs.
-    '''
-    if norm_kwargs is None:
-        if normalization == BatchNormalization:
-            norm_kwargs = {'momentum': 0.9,
-                           'scale': True,
-                           'center': True,
-                           'axis': channel_axis}
-        else:
-            norm_kwargs = {}
-            
-    '''
-    Constant kwargs passed to the init and main blocks.
-    '''
-    block_kwargs = {'skip': short_skip,
-                    'weight_decay': weight_decay,
-                    'normalization': normalization,
-                    'norm_kwargs': norm_kwargs,
-                    'nonlinearity': nonlinearity,
-                    'init': init,
-                    'ndim': ndim}
-    
-    '''
-    No sub/up-sampling at beginning, end.
-    '''
-    preprocessor = unet_block(filters=init_num_filters, **block_kwargs)
-    postprocessor = unet_block(filters=init_num_filters, **block_kwargs)
-    
-    '''
-    Assemble all necessary blocks.
-    '''
-    blocks_down = []
-    blocks_across = []
-    blocks_up = []
-    for i in range(1, num_pooling):
-        kwargs = {'filters': init_num_filters*(2**i)}
-        kwargs.update(block_kwargs)
-        blocks_down.append((unet_block, kwargs))
-    kwargs = {'filters': init_num_filters*(2**num_pooling),
-              'dropout': dropout}
-    kwargs.update(block_kwargs)
-    blocks_across.append((unet_block, kwargs))
-    for i in range(num_pooling-1, 0, -1):
-        kwargs = {'filters': init_num_filters*(2**i)}
-        if i==num_pooling-1:
-            kwargs['dropout'] = dropout
-        kwargs.update(block_kwargs)
-        blocks_up.append((unet_block, kwargs))
-    blocks = blocks_down + blocks_across + blocks_up
-    
-    '''
-    Assemble model.
-    '''
-    model = assemble_model(input_shape=input_shape,
-                           num_classes=num_classes,
-                           blocks=blocks,
-                           preprocessor=preprocessor,
-                           postprocessor=postprocessor,
-                           long_skip=long_skip,
-                           long_skip_merge_mode=long_skip_merge_mode,
-                           ndim=ndim,
-                           verbose=verbose)
-    return model
-
-
 def assemble_resunet(input_shape, num_classes, num_init_blocks,
                      num_main_blocks, main_block_depth, init_num_filters,
                      short_skip=True, long_skip=True,
@@ -378,7 +258,7 @@ def assemble_resunet(input_shape, num_classes, num_init_blocks,
                      norm_kwargs=None, weight_decay=None, init='he_normal',
                      nonlinearity='relu', ndim=2, verbose=True):
     """
-    input_shape : A tuple specifiying the 2D image input shape.
+    input_shape : A tuple specifiying the image input shape.
     num_classes : The number of classes in the segmentation output.
     num_init_blocks : The number of blocks of type init_block, above 
         main_blocks. These blocks always have the same number of channels as
@@ -574,3 +454,267 @@ def assemble_resunet(input_shape, num_classes, num_init_blocks,
                            ndim=ndim,
                            verbose=verbose)
     return model
+
+
+
+def assemble_unet(input_shape, num_classes, init_num_filters=64,
+                  num_pooling=4, short_skip=False, long_skip=True,
+                  long_skip_merge_mode='concat', upsample_mode='repeat',
+                  dropout=0., normalization=None, norm_kwargs=None,
+                  weight_decay=None, init='he_normal', nonlinearity='relu',
+                  ndim=2, verbose=True):
+    """
+    input_shape : A tuple specifiying the image input shape.
+    num_classes : The number of classes in the segmentation output.
+    init_num_filters : The number of filters in the first pair and last pair
+        of convolutions in the network. With every downsampling, the number of
+        filters is doubled; with every upsampling, it is halved.
+    num_pooling : The number of pooling (and thus upsampling) operations to 
+        perform in the network.
+    short_skip : A boolean specifying whether to use ResNet-like shortcut
+        connections from the input of each block to its output. The inputs are
+        summed with the outputs.
+    long_skip : A boolean specifying whether to use UNet-like skip connections
+        from the downward path to the upward path. These can either concatenate
+        or sum features across.
+    long_skip_merge_mode : Either or 'sum', 'concat' features across skip.
+    upsample_mode : Either 'repeat' or 'conv'. With 'repeat', rows and colums
+        are repeated as in nearest neighbour interpolation. With 'conv',
+        upscaling is done via transposed convolution.
+    dropout : A float in [0, 1.] specifying the dropout probability in the 
+        bottleneck and in the first subsequent block, as in the UNet.
+    normalization : The normalization to apply to layers (none by default).
+        Recommended to pass keras's BatchNormalization when using 
+        short_skip==True.
+    norm_kwargs : Keyword arguments to pass to normalization layers. If using
+        BatchNormalization, kwargs are autoset with a momentum of 0.9.
+    weight_decay : The weight decay (L2 penalty) used in every convolution 
+        (float).
+    init : A string specifying (or a function defining) the initializer for
+        layers.
+    nonlinearity : The nonlinearity to use, passed as a string or a function.
+    ndim : The spatial dimensionality of the input and output (either 2 or 3).
+    verbose : A boolean specifying whether to print messages about model   
+        structure during construction (if True).
+    """
+    
+    '''
+    Determine channel axis.
+    '''
+    data_format = K.image_data_format()
+    if data_format not in {'channels_first', 'channels_last'}:
+        raise ValueError('Unknown data_format ' + str(data_format))
+    if data_format=='channels_first':
+        channel_axis = 1
+    else:
+        channel_axis = -1
+    
+    '''
+    ndim must be only 2 or 3.
+    '''
+    if ndim not in [2, 3]:
+        raise ValueError("ndim must be either 2 or 3")
+            
+    '''
+    If BatchNormalization is used and norm_kwargs is not set, set default
+    kwargs.
+    '''
+    if norm_kwargs is None:
+        if normalization == BatchNormalization:
+            norm_kwargs = {'momentum': 0.9,
+                           'scale': True,
+                           'center': True,
+                           'axis': channel_axis}
+        else:
+            norm_kwargs = {}
+            
+    '''
+    Constant kwargs passed to the init and main blocks.
+    '''
+    block_kwargs = {'skip': short_skip,
+                    'weight_decay': weight_decay,
+                    'normalization': normalization,
+                    'norm_kwargs': norm_kwargs,
+                    'nonlinearity': nonlinearity,
+                    'upsample_mode': upsample_mode,
+                    'init': init,
+                    'ndim': ndim}
+    
+    '''
+    No sub/up-sampling at beginning, end.
+    '''
+    preprocessor = unet_block(filters=init_num_filters, **block_kwargs)
+    postprocessor = unet_block(filters=init_num_filters, **block_kwargs)
+    
+    '''
+    Assemble all necessary blocks.
+    '''
+    blocks_down = []
+    blocks_across = []
+    blocks_up = []
+    for i in range(1, num_pooling):
+        kwargs = {'filters': init_num_filters*(2**i)}
+        kwargs.update(block_kwargs)
+        blocks_down.append((unet_block, kwargs))
+    kwargs = {'filters': init_num_filters*(2**num_pooling),
+              'dropout': dropout}
+    kwargs.update(block_kwargs)
+    blocks_across.append((unet_block, kwargs))
+    for i in range(num_pooling-1, 0, -1):
+        kwargs = {'filters': init_num_filters*(2**i)}
+        if i==num_pooling-1:
+            kwargs['dropout'] = dropout
+        kwargs.update(block_kwargs)
+        blocks_up.append((unet_block, kwargs))
+    blocks = blocks_down + blocks_across + blocks_up
+    
+    '''
+    Assemble model.
+    '''
+    model = assemble_model(input_shape=input_shape,
+                           num_classes=num_classes,
+                           blocks=blocks,
+                           preprocessor=preprocessor,
+                           postprocessor=postprocessor,
+                           long_skip=long_skip,
+                           long_skip_merge_mode=long_skip_merge_mode,
+                           ndim=ndim,
+                           verbose=verbose)
+    return model
+
+
+def assemble_vnet(input_shape, num_classes, init_num_filters=32,
+                  num_pooling=4, short_skip=True, long_skip=True,
+                  long_skip_merge_mode='concat', upsample_mode='repeat',
+                  dropout=0., normalization=None, norm_kwargs=None,
+                  init=VarianceScaling(scale=3., mode='fan_avg'),
+                  weight_decay=None, nonlinearity='prelu', ndim=3,
+                  verbose=True):
+    """
+    input_shape : A tuple specifiying the image input shape.
+    num_classes : The number of classes in the segmentation output.
+    init_num_filters : The number of filters in the first pair and last pair
+        of convolutions in the network. With every downsampling, the number of
+        filters is doubled; with every upsampling, it is halved.
+    num_pooling : The number of pooling (and thus upsampling) operations to 
+        perform in the network.
+    short_skip : A boolean specifying whether to use ResNet-like shortcut
+        connections from the input of each block to its output. The inputs are
+        summed with the outputs.
+    long_skip : A boolean specifying whether to use VNet-like skip connections
+        from the downward path to the upward path. These can either concatenate
+        or sum features across.
+    long_skip_merge_mode : Either or 'sum', 'concat' features across skip.
+    upsample_mode : Either 'repeat' or 'conv'. With 'repeat', rows and colums
+        are repeated as in nearest neighbour interpolation. With 'conv',
+        upscaling is done via transposed convolution.
+    dropout : A float in [0, 1.] specifying the dropout probability in the 
+        bottleneck and in the first subsequent block, as in the VNet.
+    normalization : The normalization to apply to layers (none by default).
+        Recommended to pass keras's BatchNormalization when using 
+        short_skip==True.
+    norm_kwargs : Keyword arguments to pass to normalization layers. If using
+        BatchNormalization, kwargs are autoset with a momentum of 0.9.
+    init : A string specifying (or a function defining) the initializer for
+        layers.
+    weight_decay : The weight decay (L2 penalty) used in every convolution 
+        (float).
+    nonlinearity : The nonlinearity to use, passed as a string or a function.
+    ndim : The spatial dimensionality of the input and output (either 2 or 3).
+    verbose : A boolean specifying whether to print messages about model   
+        structure during construction (if True).
+    """
+    
+    '''
+    Determine channel axis.
+    '''
+    data_format = K.image_data_format()
+    if data_format not in {'channels_first', 'channels_last'}:
+        raise ValueError('Unknown data_format ' + str(data_format))
+    if data_format=='channels_first':
+        channel_axis = 1
+    else:
+        channel_axis = -1
+    
+    '''
+    ndim must be only 2 or 3.
+    '''
+    if ndim not in [2, 3]:
+        raise ValueError("ndim must be either 2 or 3")
+            
+    '''
+    If BatchNormalization is used and norm_kwargs is not set, set default
+    kwargs.
+    '''
+    if norm_kwargs is None:
+        if normalization == BatchNormalization:
+            norm_kwargs = {'momentum': 0.9,
+                           'scale': True,
+                           'center': True,
+                           'axis': channel_axis}
+        else:
+            norm_kwargs = {}
+            
+    '''
+    Constant kwargs passed to the init and main blocks.
+    '''
+    block_kwargs = {'skip': short_skip,
+                    'weight_decay': weight_decay,
+                    'normalization': normalization,
+                    'norm_kwargs': norm_kwargs,
+                    'init': init,
+                    'nonlinearity': nonlinearity,
+                    'upsample_mode': upsample_mode,
+                    'dropout': dropout,
+                    'ndim': ndim}
+    
+    '''
+    No sub/up-sampling at beginning, end.
+    '''
+    kwargs = {'num_conv': 1}
+    kwargs.update(block_kwargs)
+    preprocessor = vnet_block(filters=init_num_filters, **kwargs)
+    postprocessor = vnet_block(filters=init_num_filters, **kwargs)
+    
+    '''
+    Assemble all necessary blocks.
+    '''
+    blocks_down = []
+    blocks_across = []
+    blocks_up = []
+    for i in range(1, num_pooling):
+        kwargs = {'filters': init_num_filters*(2**i)}
+        if i==1:
+            kwargs['num_conv'] = 2
+        else:
+            kwargs['num_conv'] = 3
+        kwargs.update(block_kwargs)
+        blocks_down.append((vnet_block, kwargs))
+    kwargs = {'filters': init_num_filters*(2**num_pooling),
+              'num_conv': 3}
+    kwargs.update(block_kwargs)
+    blocks_across.append((vnet_block, kwargs))
+    for i in range(num_pooling-1, 0, -1):
+        kwargs = {'filters': init_num_filters*(2**i)}
+        if i==1:
+            kwargs['num_conv'] = 2
+        else:
+            kwargs['num_conv'] = 3
+        kwargs.update(block_kwargs)
+        blocks_up.append((vnet_block, kwargs))
+    blocks = blocks_down + blocks_across + blocks_up
+    
+    '''
+    Assemble model.
+    '''
+    model = assemble_model(input_shape=input_shape,
+                           num_classes=num_classes,
+                           blocks=blocks,
+                           preprocessor=preprocessor,
+                           postprocessor=postprocessor,
+                           long_skip=long_skip,
+                           long_skip_merge_mode=long_skip_merge_mode,
+                           ndim=ndim,
+                           verbose=verbose)
+    return model
+

@@ -429,7 +429,7 @@ def assemble_resunet(input_shape, num_classes, num_init_blocks,
     for i in range(num_main_blocks-1, -1, -1):
         kwargs = {'block_function': main_block,
                   'filters': init_num_filters*(2**i),
-                  'repetitions': main_block_depth[i]}
+                  'repetitions': main_block_depth[-i]}
         kwargs.update(block_kwargs)
         blocks_up.append((residual_block, kwargs))
     

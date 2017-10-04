@@ -4,8 +4,10 @@ from keras.layers import (Activation,
                           Lambda)
 from keras.layers.merge import add as merge_add
 from keras.layers.normalization import BatchNormalization
-from keras.layers.convolutional import (Convolution2D,
-                                        Convolution3D,
+from keras.layers.convolutional import (Conv2D,
+                                        Conv3D,
+                                        Conv2DTranspose,
+                                        Conv3DTranspose,
                                         MaxPooling2D,
                                         MaxPooling3D,
                                         UpSampling2D,
@@ -20,9 +22,19 @@ Wrappers around spatial layers to allow 2D or 3D, optionally.
 def Convolution(*args, ndim=2, **kwargs):
     layer = None
     if ndim==2:
-        layer = Convolution2D(*args, **kwargs)
+        layer = Conv2D(*args, **kwargs)
     elif ndim==3:
-        layer = Convolution3D(*args, **kwargs)
+        layer = Conv3D(*args, **kwargs)
+    else:
+        raise ValueError("ndim must be 2 or 3")
+    return layer
+
+def ConvolutionTranspose(*args, ndim=2, **kwargs):
+    layer = None
+    if ndim==2:
+        layer = Conv2DTranspose(*args, **kwargs)
+    elif ndim==3:
+        layer = Conv3DTranspose(*args, **kwargs)
     else:
         raise ValueError("ndim must be 2 or 3")
     return layer
@@ -380,14 +392,13 @@ def unet_block(filters, subsample=False, upsample=False, skip=True,
             output = Dropout(dropout)(output)
         if upsample:
             # "up-convolution" also halves the number of feature maps.
-            output = UpSampling(size=2, ndim=ndim)(output)
-            output = Convolution(filters=filters//2,
-                                 kernel_size=2,
-                                 ndim=ndim,
-                                 kernel_initializer=init,
-                                 padding='same',
-                                 kernel_regularizer=_l2(weight_decay),
-                                 name=name+"_upconv")(output)
+            output = ConvolutionTranspose(filters=filters//2,
+                                          kernel_size=2,
+                                          strides=2,
+                                          kernel_initializer=init,
+                                          padding='valid',
+                                          kernel_regularizer=_l2(weight_decay),
+                                          name=name+"_upconv")(output)
             output = get_nonlinearity(nonlinearity)(output)
         if skip:
             output = _shortcut(input, output,

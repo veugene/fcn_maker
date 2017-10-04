@@ -13,12 +13,14 @@ from keras.initializers import VarianceScaling
 import numpy as np
 from .blocks import (Convolution,
                      get_nonlinearity,
+                     _norm_nlin_conv,
                      bottleneck,
                      basic_block,
                      basic_block_mp,
                      residual_block,
                      unet_block,
-                     vnet_block)
+                     vnet_block,
+                     dense_block)
 
 
 def _l2(decay):
@@ -718,3 +720,203 @@ def assemble_vnet(input_shape, num_classes, init_num_filters=32,
                            verbose=verbose)
     return model
 
+
+def assemble_fcdensenet(input_shape, num_classes, init_num_filters=48,
+                        growth_rate=16, num_pooling=4, block_depth,
+                        long_skip=True, short_skip_merge_mode='concat',
+                        long_skip_merge_mode='concat', upsample_mode='repeat',
+                        dropout=0., normalization=BatchNormalization,
+                        norm_kwargs=None, init='he_uniform', weight_decay=None,
+                        nonlinearity='relu', ndim=2, verbose=True):
+    """
+    input_shape : A tuple specifiying the image input shape.
+    num_classes : The number of classes in the segmentation output.
+    init_num_filters : The number of filters in the first pair and last pair
+        of convolutions in the network. With every downsampling, the number of
+        filters is doubled; with every upsampling, it is halved.
+    growth_rate : The linear rate with which the number of filters increases
+        after each convolution, when using 'concat' short_skip_merge_mode.
+        In 'sum' mode, this argument simply sets the number of filters for
+        every convolution layer except the first and last ones (preprocessor
+        and postprocessor).
+        If set to None, the number of filters for each dense_block will double
+        after each pooling operation and halve after each upsampling operation.
+    num_pooling : The number of pooling (and thus upsampling) operations to 
+        perform in the network.
+    block_depth : An integer or list of integers specifying the number of
+        convolutions in each block. A list must contain 2*num_pooling+1
+        values (there are num_pooling blocks the contracting path and on the 
+        expanding path, as well as as one bottleneck on the across path).
+        Zero is a valid depth (the block still sub/up-samples).
+    short_skip_merge_mode : Either 'sum' or 'concat', specifiying how skip
+        connections in each dense_block are merged. DenseNet (and Fc-DenseNet)
+        use 'concat'.
+    long_skip : A boolean specifying whether to use long skip connections
+        from the downward path to the upward path. These can either concatenate
+        or sum features across.
+    long_skip_merge_mode : Either or 'sum', 'concat' features across skip.
+    upsample_mode : Either 'repeat' or 'conv'. With 'repeat', rows and colums
+        are repeated as in nearest neighbour interpolation. With 'conv',
+        upscaling is done via transposed convolution.
+    dropout : A float in [0, 1.], specifying dropout probability.
+    normalization : The normalization to apply to layers (none by default).
+        Recommended to pass keras's BatchNormalization when using 
+        short_skip==True.
+    norm_kwargs : Keyword arguments to pass to normalization layers. If using
+        BatchNormalization, kwargs are autoset with a momentum of 0.9.
+    init : A string specifying (or a function defining) the initializer for
+        layers.
+    weight_decay : The weight decay (L2 penalty) used in every convolution 
+        (float).
+    nonlinearity : The nonlinearity to use, passed as a string or a function.
+    ndim : The spatial dimensionality of the input and output (either 2 or 3).
+    verbose : A boolean specifying whether to print messages about model   
+        structure during construction (if True).
+    """
+    
+    '''
+    Determine channel axis.
+    '''
+    data_format = K.image_data_format()
+    if data_format not in {'channels_first', 'channels_last'}:
+        raise ValueError('Unknown data_format ' + str(data_format))
+    if data_format=='channels_first':
+        channel_axis = 1
+    else:
+        channel_axis = -1
+    
+    '''
+    block_depth can be a list per block or a single value 
+    -- ensure the list length is correct (if list) or convert to list
+    '''
+    if hasattr(block_depth, '__len__'):
+        if len(block_depth)!=2*num_main_blocks+1:
+            raise ValueError("block_depth must have " 
+                             "`2*num_main_blocks+1` values when " 
+                             "passed as a list")
+    else:
+        block_depth = [block_depth]*(2*num_pooling+1)
+        
+    '''
+    ndim must be only 2 or 3.
+    '''
+    if ndim not in [2, 3]:
+        raise ValueError("ndim must be either 2 or 3")
+            
+    '''
+    If BatchNormalization is used and norm_kwargs is not set, set default
+    kwargs.
+    '''
+    if norm_kwargs is None:
+        if normalization == BatchNormalization:
+            norm_kwargs = {'momentum': 0.9,
+                           'scale': True,
+                           'center': True,
+                           'axis': channel_axis}
+        else:
+            norm_kwargs = {}
+            
+    '''
+    Constant kwargs passed to the init and main blocks.
+    '''
+    block_kwargs = {'skip': short_skip,
+                    'dropout': dropout,
+                    'weight_decay': weight_decay,
+                    'normalization': normalization,
+                    'norm_kwargs': norm_kwargs,
+                    'upsample_mode': upsample_mode,
+                    'skip_merge_mode': skip_merge_mode,
+                    'nonlinearity': nonlinearity,
+                    'init': init,
+                    'ndim': ndim}
+    if growth_rate is not None:
+        block_kwargs['filters'] = growth_rate,
+    
+    '''
+    Single convolution + dense block as preprocessor.
+    '''
+    def _preprocessor(x):
+        out = Convolution(filters=init_num_filters,
+                          kernel_size=3,
+                          ndim=ndim,
+                          kernel_initializer=init,
+                          padding='same',
+                          kernel_regularizer=_l2(weight_decay))(x)
+        kwargs = {'block_depth': block_depth[i],
+                  'merge_input': True}
+        if growth_rate is None:
+            kwargs['filters'] = init_num_filters
+        kwargs.update(block_kwargs)
+        out = dense_block(**kwargs)(out)
+        return out
+    
+    '''
+    Dense block + norm + nonlin + conv as postprocessor.
+    '''
+    def _postprocessor(x):
+        kwargs = {'block_depth': block_depth[i],
+                  'merge_input': False}
+        if growth_rate is None:
+            kwargs['filters'] = init_num_filters
+        kwargs.update(block_kwargs)
+        out = dense_block(**kwargs)(x)
+        out = _norm_nlin_conv(filters=init_num_filters,
+                              kernel_size=3,
+                              nonlinearity=nonlinearity,
+                              normalization=normalization,
+                              norm_kwargs=norm_kwargs,
+                              weight_decay=weight_decay,
+                              init=init,
+                              ndim=ndim)(out)
+        
+        return out
+    postprocessor = _postprocessor
+    
+    '''
+    Assemble all necessary blocks.
+    '''
+    blocks_down = []
+    blocks_across = []
+    blocks_up = []
+    
+    # Down (Encoder)
+    for i in range(1, num_pooling):
+        kwargs = {'block_depth': block_depth[i],
+                  'merge_input': True}
+        if growth_rate is None:
+            kwargs['filters'] = init_num_filters*(2**i)
+        kwargs.update(block_kwargs)
+        blocks_down.append((dense_block, kwargs))
+        
+    # Bottleneck, main_block
+    kwargs = {'block_depth': block_depth[num_pooling],
+              'merge_input': False}
+    if growth_rate is None:
+        kwargs['filters'] = init_num_filters*(2**num_pooling)
+    kwargs.update(block_kwargs)
+    blocks_across.append((dense_block, kwargs))
+    
+    # Up (Decoder)
+    for i in range(num_pooling-1, 0, -1):
+        kwargs = {'block_depth': block_depth[-i],
+                  'merge_input': True}
+        if growth_rate is None:
+            kwargs['filters'] = init_num_filters*(2**i)
+        kwargs.update(block_kwargs)
+        blocks_up.append((dense_block, kwargs))
+        
+    blocks = blocks_down + blocks_across + blocks_up
+    
+    '''
+    Assemble model.
+    '''
+    model = assemble_model(input_shape=input_shape,
+                           num_classes=num_classes,
+                           blocks=blocks,
+                           preprocessor=preprocessor,
+                           postprocessor=postprocessor,
+                           long_skip=long_skip,
+                           long_skip_merge_mode=long_skip_merge_mode,
+                           ndim=ndim,
+                           verbose=verbose)
+    return model

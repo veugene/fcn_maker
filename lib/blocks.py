@@ -555,11 +555,11 @@ def vnet_block(filters, num_conv=3, subsample=False, upsample=False,
 """
 Dense block (as in a DenseNet), as implemented in the 100 layer Tiramisu.
 """
-def dense_block(filters, num_conv=4, subsample=False, upsample=False,
-                upsample_mode='conv', skip_merge_mode='concat', dropout=0.,
-                normalization=BatchNormalization, weight_decay=None,
-                norm_kwargs=None, init='he_uniform', nonlinearity='relu',
-                ndim=2, name=None):
+def dense_block(filters, block_depth=4, subsample=False, upsample=False,
+                upsample_mode='conv', skip_merge_mode='concat',
+                merge_input=True, dropout=0., normalization=BatchNormalization,
+                weight_decay=None, norm_kwargs=None, init='he_uniform',
+                nonlinearity='relu', ndim=2, name=None):
     name = _get_unique_name('vnet_block', name)
     if norm_kwargs is None:
         norm_kwargs = {}
@@ -568,16 +568,22 @@ def dense_block(filters, num_conv=4, subsample=False, upsample=False,
         output = input
         if subsample:
             # Transition down
-            if normalization is not None:
-                output = normalization(**norm_kwargs)(output)
-            output = get_nonlinearity(nonlinearity)(output)
+            output = _norm_nlin_conv(filters,
+                                     kernel_size=1,
+                                     normalization=normalization,
+                                     weight_decay=weight_decay,
+                                     norm_kwargs=norm_kwargs,
+                                     init=init,
+                                     nonlinearity=nonlinearity,
+                                     ndim=ndim,
+                                     name=name)(output)
             if dropout > 0:
                 output = get_dropout(dropout, nonlinearity)(output)
             output = MaxPooling(pool_size=2, ndim=ndim)(output)
         
         # Sequence of layers.
         tensors = [output]
-        for i in range(num_conv):
+        for i in range(block_depth):
             output = _norm_nlin_conv(filters,
                                      kernel_size=3,
                                      normalization=normalization,
@@ -593,7 +599,13 @@ def dense_block(filters, num_conv=4, subsample=False, upsample=False,
             output = merge([tensors[i], tensors[i+1], mode=skip_merge_mode)
         
         # Do not merge input in.
-        output = merge(tensors[1:], mode=skip_merge_mode)
+        if merge_input:
+            # Merge the block's input into its output.
+            output = merge(tensors, mode=skip_merge_mode)
+        else:
+            # Avoid merging the block's input into its output.
+            # With this, one can avoid exponential growth in num of filters.
+            output = merge(tensors[1:], mode=skip_merge_mode)
         
         if upsample:
             # Transition up

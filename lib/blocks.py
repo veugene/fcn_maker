@@ -58,6 +58,12 @@ def UpSampling(*args, ndim=2, **kwargs):
     
     
 """
+Return AlphaDropout if nonlinearity is 'selu', else Dropout.
+"""
+def get_dropout(dropout, nonlin=None)
+    return AlphaDropout(dropout) if nonlin=='selu' else Dropout(dropout)
+    
+"""
 Return a nonlinearity from the core library or return the provided function.
 """
 def get_nonlinearity(nonlin):
@@ -261,10 +267,7 @@ def bottleneck(filters, subsample=False, upsample=False,
                                  ndim=ndim,
                                  name=name)(output)
         if dropout > 0:
-            if nonlinearity=='selu':
-                output = AlphaDropout(dropout)(output)
-            else:
-                output = Dropout(dropout)(output)
+            output = get_dropout(dropout, nonlinearity)(output)
             
         if skip:
             output = _shortcut(input, output,
@@ -351,10 +354,7 @@ def basic_block_mp(filters, subsample=False, upsample=False,
                              kernel_regularizer=_l2(weight_decay),
                              name=name+"_conv")(output)
         if dropout > 0:
-            if nonlinearity=='selu':
-                output = AlphaDropout(dropout)(output)
-            else:
-                output = Dropout(dropout)(output)
+            output = get_dropout(dropout, nonlinearity)(output)
         if upsample:
             output = _upsample(output,
                                mode=upsample_mode,
@@ -440,7 +440,7 @@ def unet_block(filters, subsample=False, upsample=False, upsample_mode='conv',
             output = normalization(name=name+"_norm", **norm_kwargs)(output)
         output = get_nonlinearity(nonlinearity)(output)
         if dropout > 0:
-            output = Dropout(dropout)(output)
+            output = get_dropout(dropout, nonlinearity)(output)
         if upsample:
             # "up-convolution" also halves the number of feature maps.
             output = _upsample(output,
@@ -498,7 +498,7 @@ def vnet_block(filters, num_conv=3, subsample=False, upsample=False,
                                      name=name)(output)
         
             if dropout > 0:
-                output = Dropout(dropout)(output)
+                output = get_dropout(dropout, nonlinearity)(output)
         if skip:
             output = _shortcut(input, output,
                                subsample=subsample,

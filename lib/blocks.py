@@ -90,9 +90,9 @@ Helper to build a norm -> relu -> conv block
 This is an improved scheme proposed in http://arxiv.org/pdf/1603.05027v2.pdf
 """
 def _norm_relu_conv(filters, kernel_size, subsample=False, upsample=False,
-                    nonlinearity='relu', normalization=BatchNormalization,
-                    weight_decay=None,  norm_kwargs=None, init='he_normal',
-                    ndim=2, name=None):
+                    upsample_mode='repeat', nonlinearity='relu',
+                    normalization=BatchNormalization, weight_decay=None, 
+                    norm_kwargs=None, init='he_normal', ndim=2, name=None):
     if norm_kwargs is None:
         norm_kwargs = {}
     name = _get_unique_name('', name)
@@ -107,7 +107,21 @@ def _norm_relu_conv(filters, kernel_size, subsample=False, upsample=False,
         if subsample:
             stride = 2
         if upsample:
-            processed = UpSampling(size=2, ndim=ndim)(processed)
+            if upsample_mode=='repeat':
+                processed = UpSampling(size=2, ndim=ndim)(processed)
+            elif upsample_mode=='conv':
+                processed = ConvolutionTranspose( \
+                                          filters=filters,
+                                          kernel_size=2,
+                                          strides=2,
+                                          kernel_initializer=init,
+                                          padding='valid',
+                                          kernel_regularizer=_l2(weight_decay),
+                                          name=name+"_upconv")(processed)
+            else:
+                raise ValueError("Unrecognized upsample_mode: {}"
+                                 "".format(upsample_mode))
+                
         return Convolution(filters=filters, kernel_size=kernel_size, ndim=ndim,
                            strides=stride,
                            kernel_initializer=init,
@@ -184,10 +198,11 @@ Bottleneck architecture for > 34 layer resnet.
 Follows improved proposed scheme in http://arxiv.org/pdf/1603.05027v2.pdf
 Returns a final conv layer of filters * 4
 """
-def bottleneck(filters, subsample=False, upsample=False, skip=True,
-               dropout=0., normalization=BatchNormalization, weight_decay=None,
-               norm_kwargs=None, init='he_normal', nonlinearity='relu', ndim=2,
-               name=None):
+def bottleneck(filters, subsample=False, upsample=False,
+               upsample_mode='repeat', skip=True, dropout=0.,
+               normalization=BatchNormalization, weight_decay=None,
+               norm_kwargs=None, init='he_normal', nonlinearity='relu',
+               ndim=2, name=None):
     name = _get_unique_name('bottleneck', name)
     def f(input):
         output = _norm_relu_conv(filters,
@@ -212,6 +227,7 @@ def bottleneck(filters, subsample=False, upsample=False, skip=True,
         output = _norm_relu_conv(filters * 4,
                                  kernel_size=1,
                                  upsample=upsample,
+                                 upsample_mode=upsample_mode,
                                  normalization=normalization,
                                  weight_decay=weight_decay,
                                  norm_kwargs=norm_kwargs,
@@ -240,10 +256,11 @@ Basic 3 X 3 convolution blocks.
 Use for resnet with layers <= 34
 Follows improved proposed scheme in http://arxiv.org/pdf/1603.05027v2.pdf
 """
-def basic_block(filters, subsample=False, upsample=False, skip=True,
-                dropout=0., normalization=BatchNormalization, 
-                weight_decay=None, norm_kwargs=None, init='he_normal',
-                nonlinearity='relu', ndim=2, name=None):
+def basic_block(filters, subsample=False, upsample=False,
+                upsample_mode='repeat', skip=True, dropout=0.,
+                normalization=BatchNormalization, weight_decay=None,
+                norm_kwargs=None, init='he_normal', nonlinearity='relu',
+                ndim=2, name=None):
     name = _get_unique_name('basic_block', name)
     def f(input):
         output = _norm_relu_conv(filters,
@@ -261,6 +278,7 @@ def basic_block(filters, subsample=False, upsample=False, skip=True,
         output = _norm_relu_conv(filters,
                                  kernel_size=3,
                                  upsample=upsample,
+                                 upsample_mode=upsample_mode,
                                  normalization=normalization,
                                  weight_decay=weight_decay,
                                  norm_kwargs=norm_kwargs,
@@ -285,10 +303,11 @@ def basic_block(filters, subsample=False, upsample=False, skip=True,
 """
 A single basic 3x3 convolution.
 """
-def basic_block_mp(filters, subsample=False, upsample=False, skip=True,
-                   dropout=0., normalization=BatchNormalization,
-                   weight_decay=None, norm_kwargs=None, init='he_normal',
-                   nonlinearity='relu', ndim=2, name=None):
+def basic_block_mp(filters, subsample=False, upsample=False,
+                   upsample_mode='repeat', skip=True, dropout=0.,
+                   normalization=BatchNormalization, weight_decay=None,
+                   norm_kwargs=None, init='he_normal', nonlinearity='relu',
+                   ndim=2, name=None):
     if norm_kwargs is None:
         norm_kwargs = {}
     name = _get_unique_name('basic_block_mp', prefix=name)
@@ -312,7 +331,20 @@ def basic_block_mp(filters, subsample=False, upsample=False, skip=True,
             else:
                 output = Dropout(dropout)(output)
         if upsample:
-            output = UpSampling(size=2, ndim=ndim)(output)
+            if upsample_mode=='repeat':
+                output = UpSampling(size=2, ndim=ndim)(output)
+            elif upsample_mode=='conv':
+                output = ConvolutionTranspose( \
+                                          filters=filters,
+                                          kernel_size=2,
+                                          strides=2,
+                                          kernel_initializer=init,
+                                          padding='valid',
+                                          kernel_regularizer=_l2(weight_decay),
+                                          name=name+"_upconv")(output)
+            else:
+                raise ValueError("Unrecognized upsample_mode: {}"
+                                 "".format(upsample_mode))
             
         if skip:
             output = _shortcut(input, output,
@@ -329,9 +361,9 @@ Builds a residual block with repeating sub-blocks.
 """
 def residual_block(block_function, filters, repetitions, skip=True,
                    dropout=0., subsample=False, upsample=False,
-                   normalization=BatchNormalization, weight_decay=None,
-                   norm_kwargs=None, init='he_normal', nonlinearity='relu',
-                   ndim=2, name=None):
+                   upsample_mode='repeat', normalization=BatchNormalization,
+                   weight_decay=None, norm_kwargs=None, init='he_normal',
+                   nonlinearity='relu', ndim=2, name=None):
     def f(input):
         x = input
         for i in range(repetitions):
@@ -342,6 +374,7 @@ def residual_block(block_function, filters, repetitions, skip=True,
                                dropout=dropout,
                                subsample=subsample_i,
                                upsample=upsample_i,
+                               upsample_mode=upsample_mode,
                                normalization=normalization,
                                norm_kwargs=norm_kwargs,
                                weight_decay=weight_decay,

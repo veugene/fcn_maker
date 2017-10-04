@@ -373,10 +373,10 @@ def assemble_resunet(input_shape, num_classes, num_init_blocks,
                      num_main_blocks, main_block_depth, init_num_filters,
                      short_skip=True, long_skip=True,
                      long_skip_merge_mode='concat',
-                     main_block=None, init_block=None, dropout=0.,
-                     normalization=BatchNormalization, norm_kwargs=None,
-                     weight_decay=None, init='he_normal', nonlinearity='relu',
-                     ndim=2, verbose=True):
+                     main_block=None, init_block=None, upsample_mode='repeat',
+                     dropout=0., normalization=BatchNormalization,
+                     norm_kwargs=None, weight_decay=None, init='he_normal',
+                     nonlinearity='relu', ndim=2, verbose=True):
     """
     input_shape : A tuple specifiying the 2D image input shape.
     num_classes : The number of classes in the segmentation output.
@@ -407,6 +407,9 @@ def assemble_resunet(input_shape, num_classes, num_init_blocks,
     long_skip_merge_mode : Either or 'sum', 'concat' features across skip.
     main_block : A layer defining the main_block (bottleneck by default).
     init_block : A layer defining the init_block (basic_block_mp by default).
+    upsample_mode : Either 'repeat' or 'conv'. With 'repeat', rows and colums
+        are repeated as in nearest neighbour interpolation. With 'conv',
+        upscaling is done via transposed convolution.
     dropout : A float [0, 1] specifying the dropout probability, introduced in
         every block.
     normalization : the normalization to apply to layers (by default: batch
@@ -480,6 +483,7 @@ def assemble_resunet(input_shape, num_classes, num_init_blocks,
                     'weight_decay': weight_decay,
                     'normalization': normalization,
                     'norm_kwargs': norm_kwargs,
+                    'upsample_mode': upsample_mode,
                     'nonlinearity': nonlinearity,
                     'init': init,
                     'ndim': ndim}

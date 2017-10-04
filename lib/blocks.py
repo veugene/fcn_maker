@@ -3,6 +3,7 @@ from keras.layers import (Activation,
                           AlphaDropout,
                           Lambda)
 from keras.layers.merge import add as merge_add
+from keras.layers.merge import concat as merge_concat
 from keras.layers.normalization import BatchNormalization
 from keras.layers.convolutional import (Conv2D,
                                         Conv3D,
@@ -55,6 +56,29 @@ def UpSampling(*args, ndim=2, **kwargs):
         return UpSampling3D(*args, **kwargs)
     else:
         raise ValueError("ndim must be 2 or 3")
+    
+    
+"""
+Helper function to perform tensor merging.
+"""
+def merge(x, mode):
+    if mode=='sum':
+        out = merge_add(x)
+    elif mode=='concat':
+        # Determine channel axis
+        data_format = K.image_data_format()
+        if data_format not in {'channels_first', 'channels_last'}:
+            raise ValueError('Unknown data_format ' + str(data_format))
+        if data_format=='channels_first':
+            channel_axis = 1
+        else:
+            channel_axis = -1
+        
+        # Concatenate along channel axis
+        out = merge_concat(x, axis=channel_axis)
+    else:
+        raise ValueError("Unrecognized merge mode: {}".format(mode))
+    return out
     
     
 """
@@ -518,8 +542,64 @@ def vnet_block(filters, num_conv=3, subsample=False, upsample=False,
                                filters=filters//2,
                                init=init,
                                weight_decay=weight_decay,
-                               name=name+"_upconv")(output)
+                               name=name+"_upconv")
             output = get_nonlinearity(nonlinearity)(output)
         return output
 
     return f
+
+
+"""
+Dense block (as in a DenseNet), as implemented in the 100 layer Tiramisu.
+"""
+def dense_block(filters, num_conv=4, subsample=False, upsample=False,
+                upsample_mode='conv', skip_merge_mode='concat', dropout=0.,
+                normalization=BatchNormalization, weight_decay=None,
+                norm_kwargs=None, init='he_uniform', nonlinearity='relu',
+                ndim=2, name=None):
+    name = _get_unique_name('vnet_block', name)
+    if norm_kwargs is None:
+        norm_kwargs = {}
+        
+    def f(input):
+        output = input
+        if subsample:
+            # Transition down
+            if normalization is not None:
+                output = normalization(**norm_kwargs)(output)
+            output = get_nonlinearity(nonlinearity)(output)
+            if dropout > 0:
+                output = get_dropout(dropout, nonlinearity)(output)
+            output = MaxPooling(pool_size=2, ndim=ndim)(output)
+        
+        # Sequence of layers.
+        tensors = [output]
+        for i in range(num_conv):
+            output = _norm_relu_conv(filters,
+                                     kernel_size=3,
+                                     normalization=normalization,
+                                     weight_decay=weight_decay,
+                                     norm_kwargs=norm_kwargs,
+                                     init=init,
+                                     nonlinearity=nonlinearity,
+                                     ndim=ndim,
+                                     name=name)(output)
+            if dropout > 0:
+                output = get_dropout(dropout, nonlinearity)(output)
+            tensors.append(output)
+            output = merge([tensors[i], tensors[i+1], mode=skip_merge_mode)
+        
+        # Do not merge input in.
+        output = merge(tensors[1:], mode=skip_merge_mode)
+        
+        if upsample:
+            # Transition up
+            output = _upsample(output,
+                               mode=upsample_mode,
+                               ndim=ndim,
+                               filters=filters,
+                               init=init,
+                               weight_decay=weight_decay,
+                               name=name+"_upconv")
+        
+        return output

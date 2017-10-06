@@ -563,21 +563,27 @@ def vnet_block(filters, num_conv=3, subsample=False, upsample=False,
 
 """
 Dense block (as in a DenseNet), as implemented in the 100 layer Tiramisu.
+
+paper : https://arxiv.org/abs/1611.09326 (version 2)
+code  : https://github.com/SimJeg/FC-DenseNet
+        commit ee933144949d82ada32198e49d76b708f60e4
 """
 def dense_block(filters, block_depth=4, subsample=False, upsample=False,
                 upsample_mode='conv', skip_merge_mode='concat',
                 merge_input=True, dropout=0., normalization=BatchNormalization,
-                weight_decay=None, norm_kwargs=None, init='he_uniform',
+                norm_kwargs=None, weight_decay=None, init='he_uniform',
                 nonlinearity='relu', ndim=2, name=None):
-    name = _get_unique_name('vnet_block', name)
+    name = _get_unique_name('dense_block', name)
     if norm_kwargs is None:
-        norm_kwargs = {}
+        norm_kwargs = {}        
+    channel_axis = get_channel_axis()
         
     def f(input):
         output = input
+        
+        # Transition down (preserve num filters)
         if subsample:
-            # Transition down
-            output = _norm_nlin_conv(filters,
+            output = _norm_nlin_conv(filters=output._keras_shape[channel_axis],
                                      kernel_size=1,
                                      normalization=normalization,
                                      weight_decay=weight_decay,
@@ -590,8 +596,21 @@ def dense_block(filters, block_depth=4, subsample=False, upsample=False,
                 output = get_dropout(dropout, nonlinearity)(output)
             output = MaxPooling(pool_size=2, ndim=ndim)(output)
         
-        # Sequence of layers.
+        # Book keeping.
         tensors = [output]
+        
+        # If 'sum' mode, make the channel dimension match.
+        if skip_merge_mode=='sum':
+            if tensors[0]._keras_shape[channel_axis] != filters:
+                tensors[0] = Convolution(filters=filters,
+                                         kernel_size=1,
+                                         ndim=ndim,
+                                         kernel_initializer=init,
+                                         padding='valid',
+                                         kernel_regularizer=_l2(weight_decay),
+                                         name=name+"_adapt_conv")(tensors[0])
+                
+        # Build the dense block.
         for i in range(block_depth):
             output = _norm_nlin_conv(filters,
                                      kernel_size=3,
@@ -605,25 +624,34 @@ def dense_block(filters, block_depth=4, subsample=False, upsample=False,
             if dropout > 0:
                 output = get_dropout(dropout, nonlinearity)(output)
             tensors.append(output)
-            output = merge([tensors[i], tensors[i+1], mode=skip_merge_mode)
+            output = merge(tensors, mode=skip_merge_mode)
         
-        # Do not merge input in.
+        # Block's output - merge input in?
+        #
+        # Regardless, all representations inside the block (all conv outputs)
+        # are merged together, forming a dense skip pattern.
+        output = tensors[-1]
         if merge_input:
             # Merge the block's input into its output.
-            output = merge(tensors, mode=skip_merge_mode)
+            if len(tensors) > 1:
+                output = merge(tensors, mode=skip_merge_mode)
         else:
             # Avoid merging the block's input into its output.
             # With this, one can avoid exponential growth in num of filters.
-            output = merge(tensors[1:], mode=skip_merge_mode)
+            if len(tensors[1:]) > 1:
+                output = merge(tensors[1:], mode=skip_merge_mode)
         
+        # Transition up (maintain num filters)
         if upsample:
-            # Transition up
             output = _upsample(output,
                                mode=upsample_mode,
                                ndim=ndim,
-                               filters=filters,
-                               init=init,
-                               weight_decay=weight_decay,
+                               filters=output._keras_shape[channel_axis],
+                               kernel_size=3,
+                               kernel_initializer=init,
+                               kernel_regularizer=_l2(weight_decay),
                                name=name+"_upconv")
         
         return output
+    
+    return f

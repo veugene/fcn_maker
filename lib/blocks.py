@@ -3,7 +3,7 @@ from keras.layers import (Activation,
                           AlphaDropout,
                           Lambda)
 from keras.layers.merge import add as merge_add
-from keras.layers.merge import concat as merge_concat
+from keras.layers.merge import concatenate as merge_concat
 from keras.layers.normalization import BatchNormalization
 from keras.layers.convolutional import (Conv2D,
                                         Conv3D,
@@ -59,22 +59,27 @@ def UpSampling(*args, ndim=2, **kwargs):
     
     
 """
+Get keras's channel axis.
+"""
+def get_channel_axis():
+    data_format = K.image_data_format()
+    if data_format not in {'channels_first', 'channels_last'}:
+        raise ValueError('Unknown data_format ' + str(data_format))
+    if data_format=='channels_first':
+        channel_axis = 1
+    else:
+        channel_axis = -1
+    return channel_axis
+    
+    
+"""
 Helper function to perform tensor merging.
 """
 def merge(x, mode):
     if mode=='sum':
         out = merge_add(x)
     elif mode=='concat':
-        # Determine channel axis
-        data_format = K.image_data_format()
-        if data_format not in {'channels_first', 'channels_last'}:
-            raise ValueError('Unknown data_format ' + str(data_format))
-        if data_format=='channels_first':
-            channel_axis = 1
-        else:
-            channel_axis = -1
-        
-        # Concatenate along channel axis
+        channel_axis = get_channel_axis()
         out = merge_concat(x, axis=channel_axis)
     else:
         raise ValueError("Unrecognized merge mode: {}".format(mode))
@@ -84,7 +89,7 @@ def merge(x, mode):
 """
 Return AlphaDropout if nonlinearity is 'selu', else Dropout.
 """
-def get_dropout(dropout, nonlin=None)
+def get_dropout(dropout, nonlin=None):
     return AlphaDropout(dropout) if nonlin=='selu' else Dropout(dropout)
     
 """
@@ -128,14 +133,10 @@ def _upsample(x, mode, ndim, **conv_kwargs):
     if mode=='repeat':
         x = UpSampling(size=2, ndim=ndim)(x)
     elif mode=='conv':
-        x = ConvolutionTranspose(filters=filters,
-                                 kernel_size=2,
-                                 ndim=ndim,
+        x = ConvolutionTranspose(ndim=ndim, 
                                  strides=2,
-                                 kernel_initializer=init,
                                  padding='valid',
-                                 kernel_regularizer=_l2(weight_decay),
-                                 name=name+"_upconv")(x)
+                                 **conv_kwargs)(x)
     else:
         raise ValueError("Unrecognized upsample_mode: {}"
                             "".format(upsample_mode))
@@ -168,13 +169,17 @@ def _norm_nlin_conv(filters, kernel_size, subsample=False, upsample=False,
                                   mode=upsample_mode,
                                   ndim=ndim,
                                   filters=filters,
-                                  init=init,
-                                  weight_decay=weight_decay,
-                                  name=name+"_upconv")(processed)
-        return Convolution(filters=filters, kernel_size=kernel_size, ndim=ndim,
+                                  kernel_size=2,
+                                  kernel_initializer=init,
+                                  kernel_regularizer=_l2(weight_decay),
+                                  name=name+"_upconv")
+        return Convolution(filters=filters,
+                           kernel_size=kernel_size,
+                           ndim=ndim,
                            strides=stride,
                            kernel_initializer=init,
-                           padding='same', name=name+"_conv",
+                           padding='same',
+                           name=name+"_conv",
                            kernel_regularizer=_l2(weight_decay))(processed)
 
     return f
@@ -183,23 +188,18 @@ def _norm_nlin_conv(filters, kernel_size, subsample=False, upsample=False,
 """
 Adds a shortcut between input and residual block and merges them with 'sum'.
 """
-def _shortcut(input, residual, subsample, upsample, weight_decay=None,
-              init='he_normal', ndim=2, name=None):
+def _shortcut(input, residual, subsample, upsample, upsample_mode='repeat',
+              weight_decay=None, init='he_normal', ndim=2, name=None):
     name = _get_unique_name('shortcut', name)
+    channel_axis = get_channel_axis()
     shortcut = input
-    
-    # Determine channel axis
-    data_format = K.image_data_format()
-    if data_format not in {'channels_first', 'channels_last'}:
-        raise ValueError('Unknown data_format ' + str(data_format))
-    if data_format=='channels_first':
-        channel_axis = 1
-    else:
-        channel_axis = -1
     
     # Downsample input
     if subsample:
         # Subsample function.
+        data_format = K.image_data_format()
+        if data_format not in {'channels_first', 'channels_last'}:
+            raise ValueError('Unknown data_format ' + str(data_format))
         if ndim==2 and data_format=='channels_first':
             subsample_func = lambda x: x[:,:,::2,::2]
         elif ndim==2 and data_format=='channels_last':
@@ -226,7 +226,8 @@ def _shortcut(input, residual, subsample, upsample, weight_decay=None,
         shortcut = _upsample(shortcut,
                              mode=upsample_mode,
                              ndim=ndim,
-                             filters=filters,
+                             filters=shortcut._keras_shape[channel_axis],
+                             kernel_size=2,
                              kernel_initializer=init,
                              kernel_regularizer=_l2(weight_decay),
                              name=name+"_upconv")
@@ -296,6 +297,7 @@ def bottleneck(filters, subsample=False, upsample=False,
         if skip:
             output = _shortcut(input, output,
                                subsample=subsample, upsample=upsample,
+                               upsample_mode=upsample_mode,
                                weight_decay=weight_decay, init=init,
                                ndim=ndim, name=name)
         return output
@@ -343,6 +345,7 @@ def basic_block(filters, subsample=False, upsample=False,
             output = _shortcut(input, output,
                                subsample=subsample,
                                upsample=upsample,
+                               upsample_mode=upsample_mode,
                                weight_decay=weight_decay,
                                init=init,
                                ndim=ndim,
@@ -384,13 +387,15 @@ def basic_block_mp(filters, subsample=False, upsample=False,
                                mode=upsample_mode,
                                ndim=ndim,
                                filters=filters,
-                               init=init,
-                               weight_decay=weight_decay,
+                               kernel_size=2,
+                               kernel_initializer=init,
+                               kernel_regularizer=_l2(weight_decay),
                                name=name+"_upconv")
             
         if skip:
             output = _shortcut(input, output,
                                subsample=subsample, upsample=upsample,
+                               upsample_mode=upsample_mode,
                                weight_decay=weight_decay, init=init,
                                ndim=ndim, name=name)
         return output
@@ -474,14 +479,16 @@ def unet_block(filters, subsample=False, upsample=False, upsample_mode='conv',
                                mode=upsample_mode,
                                ndim=ndim,
                                filters=filters//2,
-                               init=init,
-                               weight_decay=weight_decay,
+                               kernel_size=2,
+                               kernel_initializer=init,
+                               kernel_regularizer=_l2(weight_decay),
                                name=name+"_upconv")
             output = get_nonlinearity(nonlinearity)(output)
         if skip:
             output = _shortcut(input, output,
                                subsample=subsample,
                                upsample=upsample,
+                               upsample_mode=upsample_mode,
                                weight_decay=weight_decay,
                                init=init,
                                ndim=ndim,
@@ -530,6 +537,7 @@ def vnet_block(filters, num_conv=3, subsample=False, upsample=False,
             output = _shortcut(input, output,
                                subsample=subsample,
                                upsample=False,
+                               upsample_mode=upsample_mode,
                                weight_decay=weight_decay,
                                init=init,
                                ndim=ndim,
@@ -543,8 +551,9 @@ def vnet_block(filters, num_conv=3, subsample=False, upsample=False,
                                mode=upsample_mode,
                                ndim=ndim,
                                filters=filters//2,
-                               init=init,
-                               weight_decay=weight_decay,
+                               kernel_size=2,
+                               kernel_initializer=init,
+                               kernel_regularizer=_l2(weight_decay),
                                name=name+"_upconv")
             output = get_nonlinearity(nonlinearity)(output)
         return output

@@ -595,7 +595,7 @@ def assemble_unet(input_shape, num_classes, init_num_filters=64,
 
 def assemble_vnet(input_shape, num_classes, init_num_filters=32,
                   num_pooling=4, short_skip=True, long_skip=True,
-                  long_skip_merge_mode='concat', upsample_mode='repeat',
+                  long_skip_merge_mode='concat', upsample_mode='conv',
                   dropout=0., normalization=None, norm_kwargs=None,
                   init=VarianceScaling(scale=3., mode='fan_avg'),
                   weight_decay=None, nonlinearity='prelu', ndim=3,
@@ -620,8 +620,6 @@ def assemble_vnet(input_shape, num_classes, init_num_filters=32,
         upscaling is done via transposed convolution.
     dropout : A float in [0, 1.], specifying dropout probability.
     normalization : The normalization to apply to layers (none by default).
-        Recommended to pass keras's BatchNormalization when using 
-        short_skip==True.
     norm_kwargs : Keyword arguments to pass to normalization layers. If using
         BatchNormalization, kwargs are autoset with a momentum of 0.9.
     init : A string specifying (or a function defining) the initializer for
@@ -722,12 +720,13 @@ def assemble_vnet(input_shape, num_classes, init_num_filters=32,
     return model
 
 
-def assemble_fcdensenet(input_shape, num_classes, block_depth, 
+def assemble_fcdensenet(input_shape, num_classes,
+                        block_depth=[4, 5, 7, 10, 12, 15, 12, 10, 7, 5, 4], 
                         num_blocks=11, init_num_filters=48, growth_rate=16,
                         long_skip=True, skip_merge_mode='concat', 
-                        upsample_mode='repeat', dropout=0.,
+                        upsample_mode='conv', dropout=0.2,
                         normalization=BatchNormalization, norm_kwargs=None,
-                        init='he_uniform', weight_decay=None,
+                        init='he_uniform', weight_decay=0.0001,
                         nonlinearity='relu', ndim=2, verbose=True):
     """
     input_shape : A tuple specifiying the image input shape.
@@ -758,8 +757,6 @@ def assemble_fcdensenet(input_shape, num_classes, block_depth,
         upscaling is done via transposed convolution.
     dropout : A float in [0, 1.], specifying dropout probability.
     normalization : The normalization to apply to layers (none by default).
-        Recommended to pass keras's BatchNormalization when using 
-        short_skip==True.
     norm_kwargs : Keyword arguments to pass to normalization layers. If using
         BatchNormalization, kwargs are autoset with a momentum of 0.9.
     init : A string specifying (or a function defining) the initializer for

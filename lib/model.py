@@ -458,16 +458,20 @@ def assemble_resunet(input_shape, num_classes, num_init_blocks,
 
 def assemble_unet(input_shape, num_classes, init_num_filters=64,
                   num_pooling=4, short_skip=False, long_skip=True,
-                  long_skip_merge_mode='concat', upsample_mode='repeat',
+                  long_skip_merge_mode='concat', upsample_mode='conv',
                   dropout=0., normalization=None, norm_kwargs=None,
                   weight_decay=None, init='he_normal', nonlinearity='relu',
-                  ndim=2, verbose=True, **block_kwargs):
+                  halve_features_on_upsample=True, ndim=2, verbose=True):
     """
     input_shape : A tuple specifiying the image input shape.
     num_classes : The number of classes in the segmentation output.
-    init_num_filters : The number of filters in the first pair and last pair
-        of convolutions in the network. With every downsampling, the number of
-        filters is doubled; with every upsampling, it is halved.
+    init_num_filters : The number of filters used in the convolutions of the
+        first and lost blocks in the network. With every downsampling, the
+        number of filters is doubled; with every upsampling, it is halved.
+        There are two convolutions in a unet_block so a a list/tuple of
+        two values can be passed to set each convolution separately. For
+        example, the original 2D UNet uses init_num_filters=64 or (64, 64)
+        while the original 3D UNet uses init_num_filters=(32, 64).
     num_pooling : The number of pooling (and thus upsampling) operations to 
         perform in the network.
     short_skip : A boolean specifying whether to use ResNet-like shortcut
@@ -492,6 +496,9 @@ def assemble_unet(input_shape, num_classes, init_num_filters=64,
     init : A string specifying (or a function defining) the initializer for
         layers.
     nonlinearity : The nonlinearity to use, passed as a string or a function.
+    halve_features_on_upsample : As in the original 2D UNet, have each block
+        halve the number of feature maps when upsampling. This is not done in
+        the original 3D UNet.
     ndim : The spatial dimensionality of the input and output (either 2 or 3).
     verbose : A boolean specifying whether to print messages about model   
         structure during construction (if True).
@@ -522,6 +529,15 @@ def assemble_unet(input_shape, num_classes, init_num_filters=64,
             norm_kwargs = {}
             
     '''
+    init_num_filters could be a list
+    '''
+    if hasattr(init_num_filters, '__len__'):
+        init_num_filters = np.array(init_num_filters)
+        if len(init_num_filters) != 2:
+            raise ValueError("init_num_filters must be an int "
+                             "or a length 2 iterable")
+            
+    '''
     Constant kwargs passed to the init and main blocks.
     '''
     block_kwargs = {'skip': short_skip,
@@ -535,7 +551,7 @@ def assemble_unet(input_shape, num_classes, init_num_filters=64,
                    'halve_features_on_upsample': halve_features_on_upsample}
     
     '''
-    No sub/up-sampling at beginning, end.
+    Put first and last blocks as pre/post-processor to avoid sub/up-sampling.
     '''
     preprocessor = unet_block(filters=init_num_filters, **block_kwargs)
     postprocessor = unet_block(filters=init_num_filters, **block_kwargs)

@@ -475,32 +475,39 @@ Two basic 3x3 convolutions with 2x2 conv upsampling, as in the UNet.
 Subsampling, upsampling, and dropout handled as in the UNet.
 """
 def unet_block(filters, subsample=False, upsample=False, upsample_mode='conv',
-               halve_filters_on_upsample=True, skip=False, dropout=0.,
+               halve_features_on_upsample=True, skip=False, dropout=0.,
                normalization=None, weight_decay=None, norm_kwargs=None,
-               init='he_normal', nonlinearity='relu', ndim=3, name=None):
+               init='he_normal', nonlinearity='relu', ndim=2, name=None):
     name = _get_unique_name('unet_block', name)
     if norm_kwargs is None:
         norm_kwargs = {}
+        
+    # Filters can be an int or a tuple/list
+    if hasattr(filters, '__len__'):
+        filters_1, filters_2 = filters
+    else:
+        filters_1 = filters_2 = filters
+        
     def f(input):
         output = input
         if subsample:
             output = MaxPooling(pool_size=2, ndim=ndim)(output)
-        output = Convolution(filters=filters,
-                             kernel_size=3,
-                             ndim=ndim,
-                             kernel_initializer=init,
-                             padding='same',
-                             kernel_regularizer=_l2(weight_decay),
-                             name=name+"_conv")(output)
-        output = norm_nlin_conv(filters,
-                                kernel_size=3,
-                                normalization=normalization,
-                                weight_decay=weight_decay,
-                                norm_kwargs=norm_kwargs,
-                                init=init,
-                                nonlinearity=nonlinearity,
-                                ndim=ndim,
-                                name=name)(output)
+            output = Convolution(filters=filters_1,
+                                 kernel_size=3,
+                                 ndim=ndim,
+                                 kernel_initializer=init,
+                                 padding='same',
+                                 kernel_regularizer=_l2(weight_decay),
+                                 name=name+"_conv")(output)
+            output = norm_nlin_conv(filters_2,
+                                    kernel_size=3,
+                                    normalization=normalization,
+                                    weight_decay=weight_decay,
+                                    norm_kwargs=norm_kwargs,
+                                    init=init,
+                                    nonlinearity=nonlinearity,
+                                    ndim=ndim,
+                                    name=name)(output)
         if normalization is not None:
             output = normalization(name=name+"_norm", **norm_kwargs)(output)
         output = get_nonlinearity(nonlinearity)(output)
@@ -510,14 +517,14 @@ def unet_block(filters, subsample=False, upsample=False, upsample_mode='conv',
             # "up-convolution" in standard 2D unet halves the number of 
             # feature maps - but not in the standard 3D unet. It's just a
             # user-settable option in this block, regardless of ndim.
-            if halve_filters_on_upsample:
-                n_filters = filters//2
+            if halve_features_on_upsample:
+                filters_up = filters_2//2
             else:
-                n_filters = filters
+                filters_up = filters_2
             output = _upsample(output,
                                mode=upsample_mode,
                                ndim=ndim,
-                               filters=n_filters,
+                               filters=filters_up,
                                kernel_size=2,
                                kernel_initializer=init,
                                kernel_regularizer=_l2(weight_decay),

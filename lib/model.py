@@ -242,8 +242,8 @@ def assemble_model(input_shape, num_classes, blocks,
             output_layer = Permute((3,1,2))
         else:
             output_layer = Permute((4,1,2,3))
-            output_layer.name = _unique('output')
-        output = Permute((3,1,2))(output)
+        output_layer.name = _unique('output')
+        output = output_layer(output)
     else:
         # No classifier
         output = x

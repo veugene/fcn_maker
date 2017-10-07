@@ -101,7 +101,15 @@ def assemble_model(input_shape, num_classes, blocks,
     '''
     if len(blocks)%2 != 1:
         raise ValueError('blocks list must be of odd length')
-            
+    
+    '''
+    `None` blocks are identity_block.
+    '''
+    blocks = list(blocks)
+    for i, block in enumerate(blocks):
+        if block is None:
+            blocks[i] = (identity_block, {})
+        
     '''
     ndim must be only 2 or 3.
     '''

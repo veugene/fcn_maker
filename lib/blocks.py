@@ -122,6 +122,38 @@ def _get_unique_name(name, prefix=None):
 
 
 """
+Helper function to subsample. Simple 2x decimation.
+"""
+def _subsample(x, ndim):
+    channel_axis = get_channel_axis()
+    data_format = K.image_data_format()
+    if data_format not in {'channels_first', 'channels_last'}:
+        raise ValueError('Unknown data_format ' + str(data_format))
+    if ndim==2 and data_format=='channels_first':
+        subsample_func = lambda x: x[:,:,::2,::2]
+    elif ndim==2 and data_format=='channels_last':
+        subsample_func = lambda x: x[:,::2,::2,:]
+    elif ndim==3 and data_format=='channels_first':
+        subsample_func = lambda x: x[:,:,:,::2,::2]
+    elif ndim==3 and data_format=='channels_last':
+        subsample_func = lambda x: x[:,:,::2,::2,:]
+    else:
+        raise ValueError('ndim must be 2 or 3')
+    
+    # Output shape.
+    output_shape = list(x._keras_shape)
+    spatial_dims = set(range(ndim+2)).difference([0, channel_axis])
+    for dim in spatial_dims:
+        output_shape[dim] = output_shape[dim]//2
+    output_shape = tuple(output_shape[1:])
+    
+    # Execute subsampling in this layer
+    x = Lambda(subsample_func, output_shape=output_shape)(x)
+    
+    return x
+
+
+"""
 Helper function to execute some upsampling mode.
 
 conv_kwargs are:
@@ -196,30 +228,7 @@ def _shortcut(input, residual, subsample, upsample, upsample_mode='repeat',
     
     # Downsample input
     if subsample:
-        # Subsample function.
-        data_format = K.image_data_format()
-        if data_format not in {'channels_first', 'channels_last'}:
-            raise ValueError('Unknown data_format ' + str(data_format))
-        if ndim==2 and data_format=='channels_first':
-            subsample_func = lambda x: x[:,:,::2,::2]
-        elif ndim==2 and data_format=='channels_last':
-            subsample_func = lambda x: x[:,::2,::2,:]
-        elif ndim==3 and data_format=='channels_first':
-            subsample_func = lambda x: x[:,:,:,::2,::2]
-        elif ndim==3 and data_format=='channels_last':
-            subsample_func = lambda x: x[:,:,::2,::2,:]
-        else:
-            raise ValueError('ndim must be 2 or 3')
-        
-        # Output shape.
-        output_shape = list(shortcut._keras_shape)
-        spatial_dims = set(range(ndim+2)).difference([0, channel_axis])
-        for dim in spatial_dims:
-            output_shape[dim] = output_shape[dim]//2
-        output_shape = tuple(output_shape[1:])
-        
-        # Execute subsampling in this layer
-        shortcut = Lambda(subsample_func, output_shape=output_shape)(shortcut)
+        shortcut = _subsample(shortcut, ndim=ndim)
         
     # Upsample input
     if upsample:
@@ -247,6 +256,30 @@ def _shortcut(input, residual, subsample, upsample, upsample_mode='repeat',
     out = merge_add([shortcut, residual])
         
     return out
+
+
+"""
+Identity block - do nothing except handle subsampling + upsampling.
+"""
+def identity_block(subsample=False, upsample=False, upsample_mode='repeat',
+                   ndim=2, filters=32, kernel_size=2, init='he_normal',
+                   weight_decay=0.0001, name=None):
+    name = _get_unique_name('identity', name)
+    def f(input):
+        output = input
+        if subsample:
+            output = _subsample(output, ndim=ndim)
+        if upsample:
+            output = _upsample(output,
+                               mode=upsample_mode,
+                               ndim=ndim,
+                               filters=filters,
+                               kernel_size=2,
+                               kernel_initializer=init,
+                               kernel_regularizer=_l2(weight_decay),
+                               name=name+"_upconv")
+        return output
+    return f
 
 
 """

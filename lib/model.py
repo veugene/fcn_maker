@@ -536,21 +536,21 @@ def assemble_unet(input_shape, num_classes, init_num_filters=64,
     '''
     Constant kwargs passed to the init and main blocks.
     '''
-    more_kwargs = {'skip': short_skip,
+    block_kwargs = {'skip': short_skip,
                    'weight_decay': weight_decay,
                    'normalization': normalization,
                    'norm_kwargs': norm_kwargs,
                    'nonlinearity': nonlinearity,
                    'upsample_mode': upsample_mode,
                    'init': init,
-                   'ndim': ndim}
-    more_kwargs.update(block_kwargs)
+                   'ndim': ndim,
+                   'halve_features_on_upsample': halve_features_on_upsample}
     
     '''
     No sub/up-sampling at beginning, end.
     '''
-    preprocessor = unet_block(filters=init_num_filters, **more_kwargs)
-    postprocessor = unet_block(filters=init_num_filters, **more_kwargs)
+    preprocessor = unet_block(filters=init_num_filters, **block_kwargs)
+    postprocessor = unet_block(filters=init_num_filters, **block_kwargs)
     
     '''
     Assemble all necessary blocks.
@@ -560,17 +560,17 @@ def assemble_unet(input_shape, num_classes, init_num_filters=64,
     blocks_up = []
     for i in range(1, num_pooling):
         kwargs = {'filters': init_num_filters*(2**i)}
-        kwargs.update(more_kwargs)
+        kwargs.update(block_kwargs)
         blocks_down.append((unet_block, kwargs))
     kwargs = {'filters': init_num_filters*(2**num_pooling),
               'dropout': dropout}
-    kwargs.update(more_kwargs)
+    kwargs.update(block_kwargs)
     blocks_across.append((unet_block, kwargs))
     for i in range(num_pooling-1, 0, -1):
         kwargs = {'filters': init_num_filters*(2**i)}
         if i==num_pooling-1:
             kwargs['dropout'] = dropout
-        kwargs.update(more_kwargs)
+        kwargs.update(block_kwargs)
         blocks_up.append((unet_block, kwargs))
     blocks = blocks_down + blocks_across + blocks_up
     

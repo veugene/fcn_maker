@@ -13,7 +13,6 @@ from keras.initializers import VarianceScaling
 import numpy as np
 from .blocks import (Convolution,
                      get_nonlinearity,
-                     _norm_nlin_conv,
                      get_channel_axis,
                      bottleneck,
                      basic_block,
@@ -301,14 +300,15 @@ def assemble_resunet(input_shape, num_classes, num_init_blocks,
         upscaling is done via transposed convolution.
     dropout : A float [0, 1] specifying the dropout probability, introduced in
         every block.
-    normalization : the normalization to apply to layers (by default: batch
+    normalization : The normalization to apply to layers (by default: batch
         normalization). If None, no normalization is applied.
-    norm_kwargs : keyword arguments to pass to batch norm layers. For batch
+    norm_kwargs : Keyword arguments to pass to batch norm layers. For batch
         normalization, default momentum is 0.9.
     weight_decay : The weight decay (L2 penalty) used in every convolution 
         (float).
     init : A string specifying (or a function defining) the initializer for
         layers.
+    nonlinearity : A string (or function defining) the nonlinearity.
     ndim : The spatial dimensionality of the input and output (either 2 or 3).
     verbose : A boolean specifying whether to print messages about model   
         structure during construction (if True).

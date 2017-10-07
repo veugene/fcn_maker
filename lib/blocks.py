@@ -147,10 +147,10 @@ def _upsample(x, mode, ndim, **conv_kwargs):
 Helper to build a norm -> relu -> conv block
 This is an improved scheme proposed in http://arxiv.org/pdf/1603.05027v2.pdf
 """
-def _norm_nlin_conv(filters, kernel_size, subsample=False, upsample=False,
-                    upsample_mode='repeat', nonlinearity='relu',
-                    normalization=BatchNormalization, weight_decay=None, 
-                    norm_kwargs=None, init='he_normal', ndim=2, name=None):
+def norm_nlin_conv(filters, kernel_size, subsample=False, upsample=False,
+                   upsample_mode='repeat', nonlinearity='relu',
+                   normalization=BatchNormalization, weight_decay=None, 
+                   norm_kwargs=None, init='he_normal', ndim=2, name=None):
     if norm_kwargs is None:
         norm_kwargs = {}
     name = _get_unique_name('', name)
@@ -261,36 +261,36 @@ def bottleneck(filters, subsample=False, upsample=False,
                ndim=2, name=None):
     name = _get_unique_name('bottleneck', name)
     def f(input):
-        output = _norm_nlin_conv(filters,
-                                 kernel_size=1,
-                                 subsample=subsample,
-                                 normalization=normalization,
-                                 weight_decay=weight_decay,
-                                 norm_kwargs=norm_kwargs,
-                                 init=init,
-                                 nonlinearity=nonlinearity,
-                                 ndim=ndim,
-                                 name=name)(input)
-        output = _norm_nlin_conv(filters,
-                                 kernel_size=3,
-                                 normalization=normalization,
-                                 weight_decay=weight_decay,
-                                 norm_kwargs=norm_kwargs,
-                                 init=init,
-                                 nonlinearity=nonlinearity,
-                                 ndim=ndim,
-                                 name=name)(output)
-        output = _norm_nlin_conv(filters * 4,
-                                 kernel_size=1,
-                                 upsample=upsample,
-                                 upsample_mode=upsample_mode,
-                                 normalization=normalization,
-                                 weight_decay=weight_decay,
-                                 norm_kwargs=norm_kwargs,
-                                 init=init,
-                                 nonlinearity=nonlinearity,
-                                 ndim=ndim,
-                                 name=name)(output)
+        output = norm_nlin_conv(filters,
+                                kernel_size=1,
+                                subsample=subsample,
+                                normalization=normalization,
+                                weight_decay=weight_decay,
+                                norm_kwargs=norm_kwargs,
+                                init=init,
+                                nonlinearity=nonlinearity,
+                                ndim=ndim,
+                                name=name)(input)
+        output = norm_nlin_conv(filters,
+                                kernel_size=3,
+                                normalization=normalization,
+                                weight_decay=weight_decay,
+                                norm_kwargs=norm_kwargs,
+                                init=init,
+                                nonlinearity=nonlinearity,
+                                ndim=ndim,
+                                name=name)(output)
+        output = norm_nlin_conv(filters * 4,
+                                kernel_size=1,
+                                upsample=upsample,
+                                upsample_mode=upsample_mode,
+                                normalization=normalization,
+                                weight_decay=weight_decay,
+                                norm_kwargs=norm_kwargs,
+                                init=init,
+                                nonlinearity=nonlinearity,
+                                ndim=ndim,
+                                name=name)(output)
         if dropout > 0:
             output = get_dropout(dropout, nonlinearity)(output)
             
@@ -317,29 +317,29 @@ def basic_block(filters, subsample=False, upsample=False,
                 ndim=2, name=None):
     name = _get_unique_name('basic_block', name)
     def f(input):
-        output = _norm_nlin_conv(filters,
-                                 kernel_size=3,
-                                 subsample=subsample,
-                                 normalization=normalization,
-                                 weight_decay=weight_decay,
-                                 norm_kwargs=norm_kwargs,
-                                 init=init,
-                                 nonlinearity=nonlinearity,
-                                 ndim=ndim,
-                                 name=name)(input)
+        output = norm_nlin_conv(filters,
+                                kernel_size=3,
+                                subsample=subsample,
+                                normalization=normalization,
+                                weight_decay=weight_decay,
+                                norm_kwargs=norm_kwargs,
+                                init=init,
+                                nonlinearity=nonlinearity,
+                                ndim=ndim,
+                                name=name)(input)
         if dropout > 0:
             output = Dropout(dropout)(output)
-        output = _norm_nlin_conv(filters,
-                                 kernel_size=3,
-                                 upsample=upsample,
-                                 upsample_mode=upsample_mode,
-                                 normalization=normalization,
-                                 weight_decay=weight_decay,
-                                 norm_kwargs=norm_kwargs,
-                                 init=init,
-                                 nonlinearity=nonlinearity,
-                                 ndim=ndim,
-                                 name=name)(output)
+        output = norm_nlin_conv(filters,
+                                kernel_size=3,
+                                upsample=upsample,
+                                upsample_mode=upsample_mode,
+                                normalization=normalization,
+                                weight_decay=weight_decay,
+                                norm_kwargs=norm_kwargs,
+                                init=init,
+                                nonlinearity=nonlinearity,
+                                ndim=ndim,
+                                name=name)(output)
         
         if skip:
             output = _shortcut(input, output,
@@ -459,15 +459,15 @@ def unet_block(filters, subsample=False, upsample=False, upsample_mode='conv',
                              padding='same',
                              kernel_regularizer=_l2(weight_decay),
                              name=name+"_conv")(output)
-        output = _norm_nlin_conv(filters,
-                                 kernel_size=3,
-                                 normalization=normalization,
-                                 weight_decay=weight_decay,
-                                 norm_kwargs=norm_kwargs,
-                                 init=init,
-                                 nonlinearity=nonlinearity,
-                                 ndim=ndim,
-                                 name=name)(output)
+        output = norm_nlin_conv(filters,
+                                kernel_size=3,
+                                normalization=normalization,
+                                weight_decay=weight_decay,
+                                norm_kwargs=norm_kwargs,
+                                init=init,
+                                nonlinearity=nonlinearity,
+                                ndim=ndim,
+                                name=name)(output)
         if normalization is not None:
             output = normalization(name=name+"_norm", **norm_kwargs)(output)
         output = get_nonlinearity(nonlinearity)(output)
@@ -521,15 +521,15 @@ def vnet_block(filters, num_conv=3, subsample=False, upsample=False,
                                  kernel_regularizer=_l2(weight_decay),
                                  name=name+"_downconv")(output)
         for i in range(num_conv):
-            output = _norm_nlin_conv(filters,
-                                     kernel_size=5,
-                                     normalization=normalization,
-                                     weight_decay=weight_decay,
-                                     norm_kwargs=norm_kwargs,
-                                     init=init,
-                                     nonlinearity=nonlinearity,
-                                     ndim=ndim,
-                                     name=name)(output)
+            output = norm_nlin_conv(filters,
+                                    kernel_size=5,
+                                    normalization=normalization,
+                                    weight_decay=weight_decay,
+                                    norm_kwargs=norm_kwargs,
+                                    init=init,
+                                    nonlinearity=nonlinearity,
+                                    ndim=ndim,
+                                    name=name)(output)
         
             if dropout > 0:
                 output = get_dropout(dropout, nonlinearity)(output)
@@ -583,15 +583,15 @@ def dense_block(filters, block_depth=4, subsample=False, upsample=False,
         
         # Transition down (preserve num filters)
         if subsample:
-            output = _norm_nlin_conv(filters=output._keras_shape[channel_axis],
-                                     kernel_size=1,
-                                     normalization=normalization,
-                                     weight_decay=weight_decay,
-                                     norm_kwargs=norm_kwargs,
-                                     init=init,
-                                     nonlinearity=nonlinearity,
-                                     ndim=ndim,
-                                     name=name)(output)
+            output = norm_nlin_conv(filters=output._keras_shape[channel_axis],
+                                    kernel_size=1,
+                                    normalization=normalization,
+                                    weight_decay=weight_decay,
+                                    norm_kwargs=norm_kwargs,
+                                    init=init,
+                                    nonlinearity=nonlinearity,
+                                    ndim=ndim,
+                                    name=name)(output)
             if dropout > 0:
                 output = get_dropout(dropout, nonlinearity)(output)
             output = MaxPooling(pool_size=2, ndim=ndim)(output)
@@ -612,15 +612,15 @@ def dense_block(filters, block_depth=4, subsample=False, upsample=False,
                 
         # Build the dense block.
         for i in range(block_depth):
-            output = _norm_nlin_conv(filters,
-                                     kernel_size=3,
-                                     normalization=normalization,
-                                     weight_decay=weight_decay,
-                                     norm_kwargs=norm_kwargs,
-                                     init=init,
-                                     nonlinearity=nonlinearity,
-                                     ndim=ndim,
-                                     name=name)(output)
+            output = norm_nlin_conv(filters,
+                                    kernel_size=3,
+                                    normalization=normalization,
+                                    weight_decay=weight_decay,
+                                    norm_kwargs=norm_kwargs,
+                                    init=init,
+                                    nonlinearity=nonlinearity,
+                                    ndim=ndim,
+                                    name=name)(output)
             if dropout > 0:
                 output = get_dropout(dropout, nonlinearity)(output)
             tensors.append(output)

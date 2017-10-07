@@ -473,7 +473,7 @@ def assemble_unet(input_shape, num_classes, init_num_filters=64,
                   long_skip_merge_mode='concat', upsample_mode='repeat',
                   dropout=0., normalization=None, norm_kwargs=None,
                   weight_decay=None, init='he_normal', nonlinearity='relu',
-                  ndim=2, verbose=True):
+                  ndim=2, verbose=True, **block_kwargs):
     """
     input_shape : A tuple specifiying the image input shape.
     num_classes : The number of classes in the segmentation output.
@@ -536,20 +536,21 @@ def assemble_unet(input_shape, num_classes, init_num_filters=64,
     '''
     Constant kwargs passed to the init and main blocks.
     '''
-    block_kwargs = {'skip': short_skip,
-                    'weight_decay': weight_decay,
-                    'normalization': normalization,
-                    'norm_kwargs': norm_kwargs,
-                    'nonlinearity': nonlinearity,
-                    'upsample_mode': upsample_mode,
-                    'init': init,
-                    'ndim': ndim}
+    more_kwargs = {'skip': short_skip,
+                   'weight_decay': weight_decay,
+                   'normalization': normalization,
+                   'norm_kwargs': norm_kwargs,
+                   'nonlinearity': nonlinearity,
+                   'upsample_mode': upsample_mode,
+                   'init': init,
+                   'ndim': ndim}
+    more_kwargs.update(block_kwargs)
     
     '''
     No sub/up-sampling at beginning, end.
     '''
-    preprocessor = unet_block(filters=init_num_filters, **block_kwargs)
-    postprocessor = unet_block(filters=init_num_filters, **block_kwargs)
+    preprocessor = unet_block(filters=init_num_filters, **more_kwargs)
+    postprocessor = unet_block(filters=init_num_filters, **more_kwargs)
     
     '''
     Assemble all necessary blocks.
@@ -559,17 +560,17 @@ def assemble_unet(input_shape, num_classes, init_num_filters=64,
     blocks_up = []
     for i in range(1, num_pooling):
         kwargs = {'filters': init_num_filters*(2**i)}
-        kwargs.update(block_kwargs)
+        kwargs.update(more_kwargs)
         blocks_down.append((unet_block, kwargs))
     kwargs = {'filters': init_num_filters*(2**num_pooling),
               'dropout': dropout}
-    kwargs.update(block_kwargs)
+    kwargs.update(more_kwargs)
     blocks_across.append((unet_block, kwargs))
     for i in range(num_pooling-1, 0, -1):
         kwargs = {'filters': init_num_filters*(2**i)}
         if i==num_pooling-1:
             kwargs['dropout'] = dropout
-        kwargs.update(block_kwargs)
+        kwargs.update(more_kwargs)
         blocks_up.append((unet_block, kwargs))
     blocks = blocks_down + blocks_across + blocks_up
     

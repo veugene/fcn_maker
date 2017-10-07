@@ -475,9 +475,9 @@ Two basic 3x3 convolutions with 2x2 conv upsampling, as in the UNet.
 Subsampling, upsampling, and dropout handled as in the UNet.
 """
 def unet_block(filters, subsample=False, upsample=False, upsample_mode='conv',
-               skip=False, dropout=0., normalization=None, weight_decay=None,
-               norm_kwargs=None, init='he_normal', nonlinearity='relu', ndim=3,
-               name=None):
+               halve_filters_on_upsample=True, skip=False, dropout=0.,
+               normalization=None, weight_decay=None, norm_kwargs=None,
+               init='he_normal', nonlinearity='relu', ndim=3, name=None):
     name = _get_unique_name('unet_block', name)
     if norm_kwargs is None:
         norm_kwargs = {}
@@ -507,11 +507,17 @@ def unet_block(filters, subsample=False, upsample=False, upsample_mode='conv',
         if dropout > 0:
             output = get_dropout(dropout, nonlinearity)(output)
         if upsample:
-            # "up-convolution" also halves the number of feature maps.
+            # "up-convolution" in standard 2D unet halves the number of 
+            # feature maps - but not in the standard 3D unet. It's just a
+            # user-settable option in this block, regardless of ndim.
+            if halve_filters_on_upsample:
+                n_filters = filters//2
+            else:
+                n_filters = filters
             output = _upsample(output,
                                mode=upsample_mode,
                                ndim=ndim,
-                               filters=filters//2,
+                               filters=n_filters,
                                kernel_size=2,
                                kernel_initializer=init,
                                kernel_regularizer=_l2(weight_decay),

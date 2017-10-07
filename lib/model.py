@@ -58,8 +58,8 @@ def _unique(name):
 def assemble_model(input_shape, num_classes, blocks,
                    preprocessor=None, postprocessor=None,
                    long_skip=True, long_skip_merge_mode='concat',
-                   top_block_keep_resolution=False, init='he_normal',
-                   weight_decay=0.0001, ndim=2, verbose=True):
+                   init='he_normal', weight_decay=0.0001, ndim=2,
+                   verbose=True):
     """
     input_shape : A tuple specifiying the image input shape.
     num_classes : The number of classes in the segmentation output. If None,
@@ -79,9 +79,6 @@ def assemble_model(input_shape, num_classes, blocks,
         from the downward path to the upward path. These can either concatenate
         or sum features across.
     long_skip_merge_mode : Either or 'sum', 'concat' features across skip.
-    top_block_keep_resolution : If True, the top blocks in the decoder and 
-        in the encoder keep the full resolution of the input image. Else, half
-        resolution.
     init : A string specifying (or a function defining) the initializer for
         the layers that adapt features along long skip connections.
     weight_decay : The weight decay (L2 penalty) used in layers that adapt long
@@ -192,11 +189,7 @@ def assemble_model(input_shape, num_classes, blocks,
     # Encoder (downsampling)
     for b in range(0, depth):
         func, kwargs = blocks[b]
-        if b==0 and top_block_keep_resolution:
-            subsample = False
-        else:
-            subsample = True
-        x = func(**kwargs, subsample=subsample)(x)
+        x = func(**kwargs, subsample=True)(x)
         tensors[b] = x
         v_print("BLOCK {} - shape: {}".format(b, x._keras_shape))
         
@@ -213,12 +206,8 @@ def assemble_model(input_shape, num_classes, blocks,
             x = make_long_skip(prev_x=x,
                                concat_x=concat_x,
                                name=_unique('long_skip_{}'.format(depth-b-1)))
-        if b==depth-1 and top_block_keep_resolution:
-            upsample = False
-        else:
-            upsample = True
         func, kwargs = blocks[depth+b+1]
-        x = func(**kwargs, upsample=upsample)(x)
+        x = func(**kwargs, upsample=True)(x)
         v_print("UP {} - shape: {}".format(depth-b-1, x._keras_shape))
         
     # Skip from preprocessor output to postprocessor input.
@@ -392,7 +381,7 @@ def assemble_resunet(input_shape, num_classes, num_init_blocks,
     '''
     Norm + nonlin + conv as postprocessor.
     '''
-    def _postprocessor(x):
+    def postprocessor(x):
         out = normalization(**norm_kwargs)(x)
         out = get_nonlinearity(nonlinearity)(out)
         out = Convolution(filters=init_num_filters,
@@ -402,7 +391,6 @@ def assemble_resunet(input_shape, num_classes, num_init_blocks,
                           padding='same',
                           kernel_regularizer=_l2(weight_decay))(out)
         return out
-    postprocessor = _postprocessor
     
     '''
     Assemble all necessary blocks.
@@ -825,22 +813,32 @@ def assemble_fcdensenet(input_shape, num_classes, block_depth,
         block_kwargs['filters'] = growth_rate
     
     '''
-    Single convolution as preprocessor.
+    Last block and single convolution as preprocessor (keep resolution).
     '''
-    def _preprocessor(x):
+    def preprocessor(x):
         out = Convolution(filters=init_num_filters,
                           kernel_size=3,
                           ndim=ndim,
                           kernel_initializer=init,
                           padding='same',
                           kernel_regularizer=_l2(weight_decay))(x)
+        kwargs = {'block_depth': block_depth[0],
+                  'merge_input': True}
+        kwargs.update(block_kwargs)
+        if growth_rate is None:
+            kwargs['filters'] = init_num_filters
+        out = dense_block(**kwargs)(out)
         return out
-    preprocessor = _preprocessor
     
     '''
-    No postprocessor!
+    First block as preprocessor (keep resolution).
     '''
-    postprocessor = lambda x:x
+    kwargs = {'block_depth': block_depth[-1],
+              'merge_input': False}
+    kwargs.update(block_kwargs)
+    if growth_rate is None:
+        kwargs['filters'] = init_num_filters
+    postprocessor = dense_block(**kwargs)
     
     '''
     Assemble all necessary blocks.
@@ -851,7 +849,7 @@ def assemble_fcdensenet(input_shape, num_classes, block_depth,
     n_blocks_side = num_blocks//2   # on one side
     
     # Down (Encoder)
-    for i in range(0, n_blocks_side):
+    for i in range(1, n_blocks_side):
         kwargs = {'block_depth': block_depth[i],
                   'merge_input': True}
         if growth_rate is None:
@@ -870,7 +868,7 @@ def assemble_fcdensenet(input_shape, num_classes, block_depth,
     blocks_across.append((dense_block, kwargs))
     
     # Up (Decoder)
-    for i in range(n_blocks_side-1, -1, -1):
+    for i in range(n_blocks_side-1, 0, -1):
         kwargs = {'block_depth': block_depth[-i-1],
                   'merge_input': False}
         if growth_rate is None:
@@ -890,7 +888,6 @@ def assemble_fcdensenet(input_shape, num_classes, block_depth,
                            postprocessor=postprocessor,
                            long_skip=long_skip,
                            long_skip_merge_mode=skip_merge_mode,
-                           top_block_keep_resolution=True,
                            ndim=ndim,
                            verbose=verbose)
     return model

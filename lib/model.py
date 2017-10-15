@@ -20,7 +20,8 @@ from .blocks import (Convolution,
                      residual_block,
                      unet_block,
                      vnet_block,
-                     dense_block)
+                     dense_block,
+                     identity_block)
 
 
 def _l2(decay):
@@ -220,6 +221,7 @@ def assemble_model(input_shape, num_classes, blocks,
     # Postprocessor
     if postprocessor is not None:
         x = postprocessor(x)
+        v_print("POST - shape: {}".format(x._keras_shape))
     
     # OUTPUT (SOFTMAX)
     if num_classes is not None:

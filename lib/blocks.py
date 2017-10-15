@@ -61,14 +61,17 @@ def UpSampling(*args, ndim=2, **kwargs):
 """
 Get keras's channel axis.
 """
-def get_channel_axis():
+def get_channel_axis(ndim=None):
     data_format = K.image_data_format()
     if data_format not in {'channels_first', 'channels_last'}:
         raise ValueError('Unknown data_format ' + str(data_format))
     if data_format=='channels_first':
         channel_axis = 1
     else:
-        channel_axis = -1
+        if ndim is None:
+            channel_axis = -1
+        else:
+            channel_axis = ndim+1
     return channel_axis
     
     
@@ -125,7 +128,7 @@ def _get_unique_name(name, prefix=None):
 Helper function to subsample. Simple 2x decimation.
 """
 def _subsample(x, ndim):
-    channel_axis = get_channel_axis()
+    channel_axis = get_channel_axis(ndim)
     data_format = K.image_data_format()
     if data_format not in {'channels_first', 'channels_last'}:
         raise ValueError('Unknown data_format ' + str(data_format))
@@ -223,7 +226,7 @@ Adds a shortcut between input and residual block and merges them with 'sum'.
 def _shortcut(input, residual, subsample, upsample, upsample_mode='repeat',
               weight_decay=None, init='he_normal', ndim=2, name=None):
     name = _get_unique_name('shortcut', name)
-    channel_axis = get_channel_axis()
+    channel_axis = get_channel_axis(ndim)
     shortcut = input
     
     # Downsample input
@@ -245,7 +248,7 @@ def _shortcut(input, residual, subsample, upsample, upsample_mode='repeat',
     # Stride appropriately to match residual (width, height)
     # Should be int if network architecture is correctly configured.
     equal_channels = residual._keras_shape[channel_axis] == \
-                                               input._keras_shape[channel_axis]
+                                            shortcut._keras_shape[channel_axis]
     if not equal_channels:
         shortcut = Convolution(filters=residual._keras_shape[channel_axis],
                                kernel_size=1, ndim=ndim,
@@ -622,7 +625,7 @@ def dense_block(filters, block_depth=4, subsample=False, upsample=False,
     name = _get_unique_name('dense_block', name)
     if norm_kwargs is None:
         norm_kwargs = {}        
-    channel_axis = get_channel_axis()
+    channel_axis = get_channel_axis(ndim)
         
     def f(input):
         output = input

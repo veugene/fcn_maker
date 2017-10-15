@@ -91,7 +91,7 @@ def assemble_model(input_shape, num_classes, blocks,
     '''
     Determine channel axis.
     '''
-    channel_axis = get_channel_axis()
+    channel_axis = get_channel_axis(ndim)
         
     '''
     Block list must be of odd length.
@@ -314,7 +314,7 @@ def assemble_resunet(input_shape, num_classes, num_init_blocks,
     '''
     Determine channel axis.
     '''
-    channel_axis = get_channel_axis()
+    channel_axis = get_channel_axis(ndim)
     
     '''
     By default, use depth 2 bottleneck for main_block
@@ -507,7 +507,7 @@ def assemble_unet(input_shape, num_classes, init_num_filters=64,
     '''
     Determine channel axis.
     '''
-    channel_axis = get_channel_axis()
+    channel_axis = get_channel_axis(ndim)
     
     '''
     ndim must be only 2 or 3.
@@ -635,7 +635,7 @@ def assemble_vnet(input_shape, num_classes, init_num_filters=32,
     '''
     Determine channel axis.
     '''
-    channel_axis = get_channel_axis()
+    channel_axis = get_channel_axis(ndim)
     
     '''
     ndim must be only 2 or 3.
@@ -652,7 +652,7 @@ def assemble_vnet(input_shape, num_classes, init_num_filters=32,
             norm_kwargs = {'momentum': 0.9,
                            'scale': True,
                            'center': True,
-                           'axis': channel_axis}
+                           'axis': channel_axis(ndim)}
         else:
             norm_kwargs = {}
             
@@ -772,7 +772,7 @@ def assemble_fcdensenet(input_shape, num_classes,
     '''
     Determine channel axis.
     '''
-    channel_axis = get_channel_axis()
+    channel_axis = get_channel_axis(ndim)
         
     '''
     Make sure num_blocks is odd.

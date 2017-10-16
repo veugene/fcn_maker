@@ -1,4 +1,5 @@
-from __future__ import print_function
+from __future__ import (print_function,
+                        division)
 from keras.callbacks import Callback
 from keras import backend as K
 import theano

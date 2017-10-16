@@ -495,22 +495,22 @@ def unet_block(filters, subsample=False, upsample=False, upsample_mode='conv',
         output = input
         if subsample:
             output = MaxPooling(pool_size=2, ndim=ndim)(output)
-            output = Convolution(filters=filters_1,
-                                 kernel_size=3,
-                                 ndim=ndim,
-                                 kernel_initializer=init,
-                                 padding='same',
-                                 kernel_regularizer=_l2(weight_decay),
-                                 name=name+"_conv")(output)
-            output = norm_nlin_conv(filters_2,
-                                    kernel_size=3,
-                                    normalization=normalization,
-                                    weight_decay=weight_decay,
-                                    norm_kwargs=norm_kwargs,
-                                    init=init,
-                                    nonlinearity=nonlinearity,
-                                    ndim=ndim,
-                                    name=name)(output)
+        output = Convolution(filters=filters_1,
+                             kernel_size=3,
+                             ndim=ndim,
+                             kernel_initializer=init,
+                             padding='same',
+                             kernel_regularizer=_l2(weight_decay),
+                             name=name+"_conv")(output)
+        output = norm_nlin_conv(filters=filters_2,
+                                kernel_size=3,
+                                normalization=normalization,
+                                weight_decay=weight_decay,
+                                norm_kwargs=norm_kwargs,
+                                init=init,
+                                nonlinearity=nonlinearity,
+                                ndim=ndim,
+                                name=name)(output)
         if normalization is not None:
             output = normalization(name=name+"_norm", **norm_kwargs)(output)
         output = get_nonlinearity(nonlinearity)(output)

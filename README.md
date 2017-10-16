@@ -322,7 +322,7 @@ model = assemble_fcdensenet(input_shape=(1, None, None), num_classes=11,
 
 ISBI neuronal EM segmentation challenge. Example runs a ResUNet from [1].
 
-Download data files into
+Download data files from `http://brainiac2.mit.edu/isbi_challenge/home` into:
 ```
 /tmp/datasets/isbi_2012_em/
 ```

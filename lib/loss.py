@@ -7,7 +7,7 @@ batch_axis = 0
 class_axis = 1 if K.image_data_format()=='channels_first' else -1
 
 
-def categorical_crossentropy(weighted=False, masked_class=None):
+def categorical_crossentropy(weighted=False, mask_class=None):
     '''
     Categorical crossentropy for N-dimensional inputs.
     
@@ -16,10 +16,10 @@ def categorical_crossentropy(weighted=False, masked_class=None):
     weighted : if True, loss is automatically reweighted with respect to
         classes so that each class is given equal importance (simulates class
         balancing).
-    masked_class : the (integer) class(es) that is/are masked out of the loss.
+    mask_class : the (integer) class(es) that is/are masked out of the loss.
     '''
-    if masked_class is not None and not hasattr(masked_class, '__len__'):
-        masked_class = [masked_class]
+    if mask_class is not None and not hasattr(mask_class, '__len__'):
+        mask_class = [mask_class]
     
     def categorical_crossentropy(y_true, y_pred):
         shape_y_pred_f = (K.prod(K.shape(y_pred)[:-1]), K.shape(y_pred)[-1])
@@ -43,8 +43,8 @@ def categorical_crossentropy(weighted=False, masked_class=None):
             weighted_y_true = y_true*class_weights
             sample_weights = K.max(weighted_y_true, axis=class_axis)
             wcce = cce*sample_weights
-        if masked_class is not None:
-            mask_out = K.sum([K.equal(y_true_f, t) for t in masked_class],
+        if mask_class is not None:
+            mask_out = K.sum([K.equal(y_true_f, t) for t in mask_class],
                              axis=batch_axis)
             idxs = K.not_equal(mask_out, 1).nonzero()
             wcce = cce[idxs]
@@ -52,14 +52,14 @@ def categorical_crossentropy(weighted=False, masked_class=None):
     
     # Set a custom function name
     tag = ""
-    if masked_class is not None:
-        tag += "_"+"_".join("m"+str(i) for i in masked_class)
+    if mask_class is not None:
+        tag += "_"+"_".join("m"+str(i) for i in mask_class)
     dice.__name__ = "categorical_crossentropy"+tag
     
     return categorical_crossentropy
 
 
-def dice_loss(target_class=1, masked_class=None):
+def dice_loss(target_class=1, mask_class=None):
     '''
     Dice loss.
     
@@ -68,15 +68,15 @@ def dice_loss(target_class=1, masked_class=None):
     
     Computes the soft dice loss considering all classes in target_class as one
     aggregate target class and ignoring all elements with ground truth classes
-    in masked_class.
+    in mask_class.
     
     target_class : integer or list
-    masked_class : integer or list
+    mask_class : integer or list
     '''
     if not hasattr(target_class, '__len__'):
         target_class = [target_class]
-    if masked_class is not None and not hasattr(masked_class, '__len__'):
-        masked_class = [masked_class]
+    if mask_class is not None and not hasattr(mask_class, '__len__'):
+        mask_class = [mask_class]
     
     # Define the keras expression.
     def dice(y_true, y_pred):
@@ -89,9 +89,9 @@ def dice_loss(target_class=1, masked_class=None):
         y_pred_f = K.flatten(y_pred)
         y_target = K.sum([K.cast(K.equal(y_true_f, t), K.floatx()) \
                                        for t in target_class], axis=batch_axis)
-        if masked_class is not None:
+        if mask_class is not None:
             mask_out = K.sum([K.cast(K.equal(y_true_f, t), K.floatx()) \
-                                       for t in masked_class], axis=batch_axis)
+                                       for t in mask_class], axis=batch_axis)
             idxs = K.not_equal(mask_out, 1).nonzero()
             y_target = y_target[idxs]
             y_pred_f = y_pred_f[idxs]
@@ -101,8 +101,8 @@ def dice_loss(target_class=1, masked_class=None):
     
     # Set a custom function name
     tag = "_"+"_".join(str(i) for i in target_class)
-    if masked_class is not None:
-        tag += "_"+"_".join("m"+str(i) for i in masked_class)
+    if mask_class is not None:
+        tag += "_"+"_".join("m"+str(i) for i in mask_class)
     dice.__name__ = "dice_loss"+tag
     
     return dice

@@ -1,31 +1,32 @@
- 
+from __future__ import (print_function,
+                        division)
+from builtins import input
+from collections import OrderedDict
+import os
 import sys
-sys.path.append("../")
+import shutil
 
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-
 import numpy as np
 import tifffile as tf
-import os
-from lib.model import assemble_model
+from keras import backend as K
+from keras.preprocessing.image import ImageDataGenerator
+from keras.callbacks import (EarlyStopping, 
+                             LearningRateScheduler, 
+                             ModelCheckpoint)
+from keras.regularizers import l2
+from keras.optimizers import SGD, RMSprop
+
+from lib.model import assemble_resunet
 from lib.loss import dice_loss
 from lib.blocks import (basic_block_mp,
                         basic_block,
                         bottleneck)
-from keras.preprocessing.image import ImageDataGenerator
 from lib.callbacks import FileLogger
-from keras.callbacks import (EarlyStopping, 
-                             LearningRateScheduler, 
-                             ModelCheckpoint)
-from keras import backend as K
-from keras.regularizers import l2
-from keras.optimizers import SGD, RMSprop
-import sys
-import shutil
-#from theano import tensor as T
-from collections import OrderedDict
+
+
 sys.setrecursionlimit(99999)
 
 
@@ -33,18 +34,17 @@ sys.setrecursionlimit(99999)
 model_kwargs = OrderedDict((
     ('input_shape', (1, 512, 512)),
     ('num_classes', 1),
-    ('num_filters', 16),
+    ('init_num_filters', 16),
     ('main_block_depth', [3, 8, 10, 3, 10, 8, 3]),
     ('num_main_blocks', 3),
-    ('num_adapt_blocks', 2),
-    ('skipblock_num_filters', None),
+    ('num_init_blocks', 2),
     ('weight_decay', 0.0001), 
     ('dropout', 0.1),
     ('short_skip', True),
     ('long_skip', True),
     ('long_skip_merge_mode', 'sum'),
-    ('mainblock', bottleneck),
-    ('initblock', basic_block_mp),
+    ('main_block', bottleneck),
+    ('init_block', basic_block_mp),
     ('nonlinearity', 'relu')
     ))
 P = OrderedDict((
@@ -146,7 +146,7 @@ if training:
     Y = np.expand_dims(Y, axis=1)
     
     print("Preparing model")
-    model = assemble_model(**model_kwargs)
+    model = assemble_resunet(**model_kwargs)
     
     # save experiment script
     fn = sys.argv[0].rsplit('/', 1)[-1]

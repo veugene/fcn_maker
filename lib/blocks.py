@@ -137,9 +137,9 @@ def _subsample(x, ndim):
     elif ndim==2 and data_format=='channels_last':
         subsample_func = lambda x: x[:,::2,::2,:]
     elif ndim==3 and data_format=='channels_first':
-        subsample_func = lambda x: x[:,:,:,::2,::2]
+        subsample_func = lambda x: x[:,:,::2,::2,::2]
     elif ndim==3 and data_format=='channels_last':
-        subsample_func = lambda x: x[:,:,::2,::2,:]
+        subsample_func = lambda x: x[:,::2,::2,::2,:]
     else:
         raise ValueError('ndim must be 2 or 3')
     

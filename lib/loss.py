@@ -3,7 +3,6 @@ import numpy as np
 
 
 # Define axes according to keras.
-batch_axis = 0
 class_axis = 1 if K.image_data_format()=='channels_first' else -1
 
 
@@ -87,12 +86,12 @@ def dice_loss(target_class=1, mask_class=None):
         y_true_f = K.flatten(y_true)
         y_true_f = K.cast(y_true_f, 'int32')
         y_pred_f = K.flatten(y_pred)
-        y_target = K.sum([K.cast(K.equal(y_true_f, t), K.floatx()) \
-                                       for t in target_class], axis=batch_axis)
+        y_target = K.sum([K.equal(y_true_f, t) for t in target_class],
+                         axis=0)
         if mask_class is not None:
-            mask_out = K.sum([K.cast(K.equal(y_true_f, t), K.floatx()) \
-                                       for t in mask_class], axis=batch_axis)
-            idxs = K.not_equal(mask_out, 1).nonzero()
+            mask_out = K.sum([K.equal(y_true_f, t) for t in mask_class],
+                             axis=0)
+            idxs = K.equal(mask_out, 0).nonzero()
             y_target = y_target[idxs]
             y_pred_f = y_pred_f[idxs]
         intersection = K.sum(y_target * y_pred_f)

@@ -1,3 +1,4 @@
+from __future__ import print_function
 from keras.models import Model
 from keras.layers import (Input,
                           Activation,
@@ -190,13 +191,13 @@ def assemble_model(input_shape, num_classes, blocks,
     # Encoder (downsampling)
     for b in range(0, depth):
         func, kwargs = blocks[b]
-        x = func(**kwargs, subsample=True)(x)
+        x = func(subsample=True, **kwargs)(x)
         tensors[b] = x
         v_print("BLOCK {} - shape: {}".format(b, x._keras_shape))
         
     # Bottleneck
     func, kwargs = blocks[depth]
-    x = func(**kwargs, subsample=True, upsample=True)(x)
+    x = func(subsample=True, upsample=True, **kwargs)(x)
     v_print("ACROSS {} - shape: {}".format(depth, x._keras_shape))
     
     # Decoder (upsampling)
@@ -208,7 +209,7 @@ def assemble_model(input_shape, num_classes, blocks,
                                concat_x=concat_x,
                                name=_unique('long_skip_{}'.format(depth-b-1)))
         func, kwargs = blocks[depth+b+1]
-        x = func(**kwargs, upsample=True)(x)
+        x = func(upsample=True, **kwargs)(x)
         v_print("UP {} - shape: {}".format(depth-b-1, x._keras_shape))
         
     # Skip from preprocessor output to postprocessor input.

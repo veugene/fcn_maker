@@ -21,7 +21,7 @@ from keras import backend as K
 """
 Wrappers around spatial layers to allow 2D or 3D, optionally.
 """
-def Convolution(*args, ndim=2, **kwargs):
+def Convolution(ndim=2, *args, **kwargs):
     layer = None
     if ndim==2:
         layer = Conv2D(*args, **kwargs)
@@ -31,7 +31,7 @@ def Convolution(*args, ndim=2, **kwargs):
         raise ValueError("ndim must be 2 or 3")
     return layer
 
-def ConvolutionTranspose(*args, ndim=2, **kwargs):
+def ConvolutionTranspose(ndim=2, *args, **kwargs):
     layer = None
     if ndim==2:
         layer = Conv2DTranspose(*args, **kwargs)
@@ -41,7 +41,7 @@ def ConvolutionTranspose(*args, ndim=2, **kwargs):
         raise ValueError("ndim must be 2 or 3")
     return layer
     
-def MaxPooling(*args, ndim=2, **kwargs):
+def MaxPooling(ndim=2, *args, **kwargs):
     if ndim==2:
         return MaxPooling2D(*args, **kwargs)
     elif ndim==3:
@@ -49,7 +49,7 @@ def MaxPooling(*args, ndim=2, **kwargs):
     else:
         raise ValueError("ndim must be 2 or 3")
     
-def UpSampling(*args, ndim=2, **kwargs):
+def UpSampling(ndim=2,*args,  **kwargs):
     if ndim==2:
         return UpSampling2D(*args, **kwargs)
     elif ndim==3:

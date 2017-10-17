@@ -26,8 +26,16 @@ def dice_loss(target_class=1, mask_class=None):
     # Define the keras expression.
     def dice(y_true, y_pred):
         smooth = 1
-        if K.ndim(y_true)==K.ndim(y_pred):
-            # Change ground truth from categorical to integer format.
+        
+        # If needed, change ground truth from categorical to integer format.
+        if K.ndim(y_true) > K.ndim(y_pred):
+            data_format = K.image_data_format()
+            if data_format=='channels_first':
+                class_axis = 1
+            elif data_format=='channels_last':
+                class_axis = K.ndim(y_true)-1
+            else:
+                raise ValueError("Unknown data_format {}".format(data_format))
             y_true = K.argmax(y_true, axis=class_axis)
         y_true_f = K.flatten(y_true)
         y_true_f = K.cast(y_true_f, 'int32')

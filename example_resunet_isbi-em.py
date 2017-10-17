@@ -12,12 +12,12 @@ from keras.callbacks import (EarlyStopping,
                              LearningRateScheduler)
 from keras.optimizers import RMSprop
 
-from lib.model import assemble_resunet
-from lib.loss import dice_loss
-from lib.blocks import (basic_block_mp,
-                        basic_block,
-                        bottleneck,
-                        get_channel_axis)
+from fcn_maker.model import assemble_resunet
+from fcn_maker.loss import dice_loss
+from fcn_maker.blocks import (basic_block_mp,
+                              basic_block,
+                              bottleneck,
+                              get_channel_axis)
 
 '''
 Settings.

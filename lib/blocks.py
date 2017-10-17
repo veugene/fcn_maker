@@ -66,7 +66,7 @@ Get keras's channel axis.
 def get_channel_axis(ndim=None):
     data_format = K.image_data_format()
     if data_format not in {'channels_first', 'channels_last'}:
-        raise ValueError('Unknown data_format ' + str(data_format))
+        raise ValueError("Unknown data_format {}".format(data_format))
     if data_format=='channels_first':
         channel_axis = 1
     else:

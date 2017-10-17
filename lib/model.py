@@ -40,16 +40,11 @@ def _softmax(x):
     """
     Softmax that works on ND inputs.
     """
-    data_format = K.image_data_format()
-    if data_format not in {'channels_first', 'channels_last'}:
-        raise ValueError("Unknown data_format " + str(data_format))
-    if data_format=='channels_first':
-        axis = -1
-    else:
-        axis = -2
-    e = K.exp(x - K.max(x, axis=axis, keepdims=True))
-    s = K.sum(e, axis=axis, keepdims=True)
+    channel_axis = get_channel_axis(K.ndim(x)-2)
+    e = K.exp(x - K.max(x, axis=channel_axis, keepdims=True))
+    s = K.sum(e, axis=channel_axis, keepdims=True)
     return e / s
+
 
 def _unique(name):
     """
@@ -234,20 +229,10 @@ def assemble_model(input_shape, num_classes, blocks,
                              activation='linear',
                              kernel_regularizer=_l2(weight_decay),
                              name=_unique('classifier_conv'))(x)
-        if ndim==2:
-            output = Permute((2,3,1))(output)
-        else:
-            output = Permute((2,3,4,1))(output)
         if num_classes==1:
-            output = Activation('sigmoid')(output)
+            output = Activation('sigmoid', name=_unique('output'))(output)
         else:
-            output = Activation(_softmax)(output)
-        if ndim==2:
-            output_layer = Permute((3,1,2))
-        else:
-            output_layer = Permute((4,1,2,3))
-        output_layer.name = _unique('output')
-        output = output_layer(output)
+            output = Activation(_softmax, name=_unique('output'))(output)
     else:
         # No classifier
         output = x

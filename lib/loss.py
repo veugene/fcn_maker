@@ -37,20 +37,41 @@ def dice_loss(target_class=1, mask_class=None):
             else:
                 raise ValueError("Unknown data_format {}".format(data_format))
             y_true = K.argmax(y_true, axis=class_axis)
+            
+        # Flatten all inputs.
         y_true_f = K.flatten(y_true)
         y_true_f = K.cast(y_true_f, 'int32')
         y_pred_f = K.flatten(y_pred)
-        y_target = K.sum([K.equal(y_true_f, t) for t in target_class],
-                         axis=0)
-        if mask_class is not None:
-            mask_out = K.sum([K.equal(y_true_f, t) for t in mask_class],
+        
+        # Aggregate target classes, mask out classes in mask_class.
+        if K.backend()=='theano':
+            y_target = K.sum([K.equal(y_true_f, t) for t in target_class],
                              axis=0)
-            idxs = K.equal(mask_out, 0).nonzero()
-            y_target = y_target[idxs]
-            y_pred_f = y_pred_f[idxs]
+            if mask_class is not None:
+                mask_out = K.sum([K.equal(y_true_f, t) for t in mask_class],
+                                 axis=0)
+                idxs = K.equal(mask_out, 0).nonzero()
+                y_target = y_target[idxs]
+                y_pred_f = y_pred_f[idxs]
+        elif K.backend()=='tensorflow':
+            y_target = K.sum([K.cast(K.equal(y_true_f, t), K.floatx()) \
+                             for t in target_class], axis=0)
+            if mask_class is not None:
+                mask_out = K.sum([K.cast(K.equal(y_true_f, t), K.floatx()) \
+                                 for t in mask_class], axis=0)
+                mask_bool = K.equal(mask_out, 0)
+                y_target = tf.boolean_mask(y_target, mask_bool)
+                y_pred_f = tf.boolean_mask(y_pred_f, mask_bool)
+        else:
+            raise NotImplementedError("dice loss not implemented for backend: "
+                                      "{}".format(K.backend()))
+        
+        # Compute dice value.
         intersection = K.sum(y_target * y_pred_f)
-        return -(2.*intersection+smooth) / \
-                (K.sum(y_target)+K.sum(y_pred_f)+smooth)
+        dice_val = -(2.*intersection+smooth) / \
+                    (K.sum(y_target)+K.sum(y_pred_f)+smooth)
+                    
+        return dice_val
     
     # Set a custom function name
     tag = "_"+"_".join(str(i) for i in target_class)
@@ -59,4 +80,3 @@ def dice_loss(target_class=1, mask_class=None):
     dice.__name__ = "dice_loss"+tag
     
     return dice
-

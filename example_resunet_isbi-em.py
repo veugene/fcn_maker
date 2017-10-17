@@ -28,7 +28,7 @@ model_kwargs = OrderedDict((
     ('num_init_blocks', 2),
     ('num_main_blocks', 3),
     ('main_block_depth', [3, 8, 10, 3, 10, 8, 3]),
-    ('init_num_filters', 16),
+    ('init_num_filters', 32),
     ('short_skip', True),
     ('long_skip', True),
     ('long_skip_merge_mode', 'sum'),
@@ -61,9 +61,9 @@ Learning rate scheduler.
 '''
 def scheduler(epoch):
     if epoch%200==0 and epoch>0:
-        tmp_lr = (model.optimizer.lr.get_value()/10).astype('float32')
-        model.optimizer.lr.set_value(tmp_lr)        
-    lr = model.optimizer.lr.get_value()
+        tmp_lr = (K.get_value(model.optimizer.lr)/10).astype('float32')
+        K.set_value(model.optimizer.lr, tmp_lr)
+    lr = K.get_value(model.optimizer.lr)
     return np.float(lr)
 
 '''
@@ -115,6 +115,7 @@ if __name__=='__main__':
     R = np.random.permutation(len(X))
     X = X[R]
     Y = Y[R]
+    Y = 1-Y
     # Split (26 training, 4 validation)
     X_train = X[:26]
     Y_train = Y[:26]
@@ -132,7 +133,7 @@ if __name__=='__main__':
     '''
     model = assemble_resunet(**model_kwargs)
     optimizer = RMSprop(lr=0.001, rho=0.9, epsilon=1e-08)
-    model.compile(loss=dice_loss(target_class=0), 
+    model.compile(loss=dice_loss(), 
                   optimizer=optimizer, 
                   metrics=[accuracy])
 

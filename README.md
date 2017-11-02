@@ -1,6 +1,12 @@
 # FCN Maker #
 
-This code provides a simple way to recreate any encoder-decoder based fully convolutional network (FCN) for segmentation or keypoint detection. Simple recipes are provided for multiple published methods. These methods can be easily tweaked in a multitude of ways. The user can also create custom FCN networks in a simple way.
+Build any FCN.
+
+This code provides a simple way to (re)create any encoder-decoder based fully convolutional network (FCN) for segmentation or keypoint detection. Simple recipes are provided for multiple published methods (see __Example Models__). These methods can be easily tweaked in a multitude of ways. The user can also create custom FCN networks in a simple way.
+
+__Uses:__ keras 2+  
+__Supported backends:__  Theano, Tensorflow  
+__Unsupported backends:__  CNTK
 
 ## Build a Custom FCN ##
 

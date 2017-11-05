@@ -149,7 +149,7 @@ def _subsample(x, ndim):
     output_shape = list(x._keras_shape)
     spatial_dims = set(range(ndim+2)).difference([0, channel_axis])
     for dim in spatial_dims:
-        output_shape[dim] = output_shape[dim]//2
+        output_shape[dim] = output_shape[dim]//2 + output_shape[dim]%2
     output_shape = tuple(output_shape[1:])
     
     # Execute subsampling in this layer

@@ -1,10 +1,10 @@
 from __future__ import (print_function,
                         division)
-from keras import backend as K
+import torch
 import numpy as np
 
 
-def dice_loss(target_class=1, mask_class=None):
+class dice_loss(torch.nn.Module):
     '''
     Dice loss.
     
@@ -18,65 +18,38 @@ def dice_loss(target_class=1, mask_class=None):
     target_class : integer or list
     mask_class : integer or list
     '''
-    if not hasattr(target_class, '__len__'):
-        target_class = [target_class]
-    if mask_class is not None and not hasattr(mask_class, '__len__'):
-        mask_class = [mask_class]
-    
-    # Define the keras expression.
-    def dice(y_true, y_pred):
-        smooth = 1
-        
+    def __init__(self, target_class=1, mask_class=None):
+        super(dice_loss, self).__init__()
+        if not hasattr(target_class, '__len__'):
+            target_class = [target_class]
+        if mask_class is not None and not hasattr(mask_class, '__len__'):
+            mask_class = [mask_class]
+        self.target_class = target_class
+        self.mask_class = mask_class
+        self.smooth = 1
+            
+    def forward(self, y_pred, y_true):
         # If needed, change ground truth from categorical to integer format.
-        if K.ndim(y_true) > K.ndim(y_pred):
-            data_format = K.image_data_format()
-            if data_format=='channels_first':
-                class_axis = 1
-            elif data_format=='channels_last':
-                class_axis = K.ndim(y_true)-1
-            else:
-                raise ValueError("Unknown data_format {}".format(data_format))
-            y_true = K.argmax(y_true, axis=class_axis)
+        if y_true.ndimension() > y_pred.ndimension():
+            y_true = torch.max(y_true, axis=1)[1]   # argmax
             
         # Flatten all inputs.
-        y_true_f = K.flatten(y_true)
-        y_true_f = K.cast(y_true_f, 'int32')
-        y_pred_f = K.flatten(y_pred)
+        y_true_f = y_true.view(-1).int()
+        y_pred_f = y_pred.view(-1)
         
         # Aggregate target classes, mask out classes in mask_class.
-        if K.backend()=='theano':
-            y_target = K.sum([K.equal(y_true_f, t) for t in target_class],
-                             axis=0)
-            if mask_class is not None:
-                mask_out = K.sum([K.equal(y_true_f, t) for t in mask_class],
-                                 axis=0)
-                idxs = K.equal(mask_out, 0).nonzero()
-                y_target = y_target[idxs]
-                y_pred_f = y_pred_f[idxs]
-        elif K.backend()=='tensorflow':
-            y_target = K.sum([K.cast(K.equal(y_true_f, t), K.floatx()) \
-                             for t in target_class], axis=0)
-            if mask_class is not None:
-                mask_out = K.sum([K.cast(K.equal(y_true_f, t), K.floatx()) \
-                                 for t in mask_class], axis=0)
-                mask_bool = K.equal(mask_out, 0)
-                y_target = tf.boolean_mask(y_target, mask_bool)
-                y_pred_f = tf.boolean_mask(y_pred_f, mask_bool)
-        else:
-            raise NotImplementedError("dice loss not implemented for backend: "
-                                      "{}".format(K.backend()))
+        y_target = torch.sum([torch.equal(y_true_f, t) for t in target_class],
+                              axis=0)
+        if mask_class is not None:
+            mask_out = torch.sum([K.equal(y_true_f, t) for t in mask_class],
+                                  axis=0)
+            idxs = torch.equal(mask_out, 0).nonzero()
+            y_target = y_target[idxs]
+            y_pred_f = y_pred_f[idxs]
         
         # Compute dice value.
-        intersection = K.sum(y_target * y_pred_f)
-        dice_val = -(2.*intersection+smooth) / \
-                    (K.sum(y_target)+K.sum(y_pred_f)+smooth)
+        intersection = torch.sum(y_target * y_pred_f)
+        dice_val = -(2.*intersection+self.smooth) / \
+                    (torch.sum(y_target)+torch.sum(y_pred_f)+self.smooth)
                     
         return dice_val
-    
-    # Set a custom function name
-    tag = "_"+"_".join(str(i) for i in target_class)
-    if mask_class is not None:
-        tag += "_"+"_".join("m"+str(i) for i in mask_class)
-    dice.__name__ = "dice_loss"+tag
-    
-    return dice

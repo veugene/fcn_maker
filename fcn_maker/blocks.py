@@ -1,93 +1,147 @@
 from __future__ import (print_function,
                         division)
-from keras.layers import (Activation,
-                          Dropout,
-                          AlphaDropout,
-                          Lambda)
-from keras.layers.merge import add as merge_add
-from keras.layers.merge import concatenate as merge_concat
-from keras.layers.normalization import BatchNormalization
-from keras.layers.convolutional import (Conv2D,
-                                        Conv3D,
-                                        Conv2DTranspose,
-                                        Conv3DTranspose,
-                                        MaxPooling2D,
-                                        MaxPooling3D,
-                                        UpSampling2D,
-                                        UpSampling3D)
-from keras.initializers import VarianceScaling
-from keras.regularizers import l2
-from keras import backend as K
+import torch
 
 
 """
-Wrappers around spatial layers to allow 2D or 3D, optionally.
+Return a nonlinearity from the core library or return the provided function.
 """
-def Convolution(ndim=2, *args, **kwargs):
-    layer = None
-    if ndim==2:
-        layer = Conv2D(*args, **kwargs)
-    elif ndim==3:
-        layer = Conv3D(*args, **kwargs)
-    else:
-        raise ValueError("ndim must be 2 or 3")
-    return layer
-
-def ConvolutionTranspose(ndim=2, *args, **kwargs):
-    layer = None
-    if ndim==2:
-        layer = Conv2DTranspose(*args, **kwargs)
-    elif ndim==3:
-        layer = Conv3DTranspose(*args, **kwargs)
-    else:
-        raise ValueError("ndim must be 2 or 3")
-    return layer
+def get_nonlinearity(nonlin):
+    if nonlin is None:
+        class identity_activation(torch.nn.Module):
+            def __init__(self):
+                super(identity_activation, self).__init__()
+            def forward(self, input):
+                return input
+        return identity_activation()
+        
+    # Unpack keyword arguments if they are passed.
+    kwargs = {}
+    if not isinstance(nonlin, str) and hasattr(nonlin, '__len__'):
+        nonlin, kwargs = nonlin
     
-def MaxPooling(ndim=2, *args, **kwargs):
-    if ndim==2:
-        return MaxPooling2D(*args, **kwargs)
-    elif ndim==3:
-        return MaxPooling3D(*args, **kwargs)
+    # Identify function.
+    func = None
+    if isinstance(nonlin, str):
+        # Find the nonlinearity by name.
+        try:
+            func = getattr(torch.nn.modules.activation, nonlin)
+        except AttributeError:
+            raise ValueError("Specified nonlinearity ({}) not found."
+                             "".format(nonlin))
     else:
-        raise ValueError("ndim must be 2 or 3")
-    
-def UpSampling(ndim=2,*args,  **kwargs):
-    if ndim==2:
-        return UpSampling2D(*args, **kwargs)
-    elif ndim==3:
-        return UpSampling3D(*args, **kwargs)
-    else:
-        raise ValueError("ndim must be 2 or 3")
+        # Not a name; assume a module is passed instead.
+        func = nonlin
+        
+    return func(**kwargs)
     
     
 """
-Get keras's channel axis.
+Return an initializer from the core library or return the provided function.
 """
-def get_channel_axis(ndim=None):
-    data_format = K.image_data_format()
-    if data_format not in {'channels_first', 'channels_last'}:
-        raise ValueError("Unknown data_format {}".format(data_format))
-    if data_format=='channels_first':
-        channel_axis = 1
+def get_initializer(init):
+    if init is None:
+        return None
+        
+    # Unpack keyword arguments if they are passed.
+    kwargs = None
+    if not isinstance(init, str) and hasattr(init, '__len__'):
+        init, kwargs = init
+    
+    # Identify function.
+    func = None
+    if isinstance(init, str):
+        # Find the initializer by name.
+        try:
+            func = getattr(torch.nn.init, init)
+        except AttributeError:
+            raise ValueError("Specified initializer ({}) not found."
+                             "".format(init))
     else:
-        if ndim is None:
-            channel_axis = -1
+        # Not a name; assume a function is passed instead.
+        func = init
+        
+    # Include keyword arguments if they exist, using a closure.
+    if kwargs is not None:
+        def _func(x):
+            return func(x, **kwargs)
+        func = _func
+        
+    return func
+    
+"""
+Select 2D or 3D as argument (ndim) and initialize weights on creation.
+"""
+class convolution(torch.nn.Module):
+    def __init__(self, ndim=2, init=None, *args, **kwargs):
+        super(convolution, self).__init__()
+        if ndim==2:
+            conv = torch.nn.Conv2d
+        elif ndim==3:
+            conv = torch.nn.Conv3d
         else:
-            channel_axis = ndim+1
-    return channel_axis
+            ValueError("ndim must be 2 or 3")
+        self.ndim = ndim
+        self.init = init
+        self.op = conv(*args, **kwargs)
+        self.in_channels = self.op.in_channels
+        self.out_channels = self.op.out_channels
+        if init is not None:
+            get_initializer(init)(self.op.weight.data)
+        
+    def forward(self, input):
+        return self.op(input)
+        
+class convolution_transpose(torch.nn.Module):
+    def __init__(self, ndim=2, init=None, *args, **kwargs):
+        super(convolution_transpose, self).__init__()
+        if ndim==2:
+            conv = torch.nn.ConvTranspose2d
+        elif ndim==3:
+            conv = torch.nn.ConvTranspose3d
+        else:
+            ValueError("ndim must be 2 or 3")
+        self.ndim = ndim
+        self.init = init
+        self.op = conv(*args, **kwargs)
+        self.in_channels = self.op.in_channels
+        self.out_channels = self.op.out_channels
+        if init is not None:
+            get_initializer(init)(self.op.weight.data)
+        
+    def forward(self, input):
+        return self.op(input)
     
-    
-"""
-Helper function to perform tensor merging.
-"""
-def merge(x, mode):
-    if mode=='sum':
-        out = merge_add(x)
-    elif mode=='concat':
-        channel_axis = get_channel_axis()
-        out = merge_concat(x, axis=channel_axis)
+def max_pooling(ndim=2, *args, **kwargs):
+    if ndim==2:
+        return torch.nn.MaxPool2d(*args, **kwargs)
+    elif ndim==3:
+        return torch.nn.MaxPool3d(*args, **kwargs)
     else:
+        raise ValueError("ndim must be 2 or 3")
+        
+def batch_normalization(ndim=2, *args, **kwargs):
+    if ndim==2:
+        return torch.nn.BatchNorm2d(*args, **kwargs)
+    elif ndim==3:
+        return torch.nn.BatchNorm3d(*args, **kwargs)
+    else:
+        raise ValueError("ndim must be 2 or 3")
+    
+    
+"""
+Helper to perform tensor merging.
+"""
+def merge(tensors, mode):
+    if mode not in ['sum', 'concat']:
         raise ValueError("Unrecognized merge mode: {}".format(mode))
+    out = None
+    if mode=='sum':
+        out = tensors[0]
+        for t in tensors[1:]:
+            out += t
+    elif mode=='concat':
+        out = torch.cat(tensors, dim=1)
     return out
     
     
@@ -95,252 +149,286 @@ def merge(x, mode):
 Return AlphaDropout if nonlinearity is 'selu', else Dropout.
 """
 def get_dropout(dropout, nonlin=None):
-    return AlphaDropout(dropout) if nonlin=='selu' else Dropout(dropout)
-    
-"""
-Return a nonlinearity from the core library or return the provided function.
-"""
-def get_nonlinearity(nonlin):
-    if isinstance(nonlin, str):
-        return Activation(nonlin)
-    return nonlin()
-
-
-"""
-Return a new instance of l2 regularizer, or return None.
-"""
-def _l2(decay):
-    if decay is not None:
-        return l2(decay)
-    else:
-        return None
-    
-
-"""
-Add a unique identifier to a name string.
-"""
-def _get_unique_name(name, prefix=None):
-    if prefix is not None:
-        name = prefix + '_' + name
-    name += '_' + str(K.get_uid(name))
-    return name
+    if nonlin=='selu':
+        return torch.nn.AlphaDropout(dropout)
+    return torch.nn.Dropout(dropout)
 
 
 """
 Helper function to subsample. Simple 2x decimation.
 """
-def _subsample(x, ndim):
-    channel_axis = get_channel_axis(ndim)
-    data_format = K.image_data_format()
-    if data_format not in {'channels_first', 'channels_last'}:
-        raise ValueError('Unknown data_format ' + str(data_format))
-    if ndim==2 and data_format=='channels_first':
-        subsample_func = lambda x: x[:,:,::2,::2]
-    elif ndim==2 and data_format=='channels_last':
-        subsample_func = lambda x: x[:,::2,::2,:]
-    elif ndim==3 and data_format=='channels_first':
-        subsample_func = lambda x: x[:,:,::2,::2,::2]
-    elif ndim==3 and data_format=='channels_last':
-        subsample_func = lambda x: x[:,::2,::2,::2,:]
-    else:
-        raise ValueError('ndim must be 2 or 3')
+class do_subsample(torch.nn.Module):
+    def __init__(self, ndim):
+        super(do_subsample, self).__init__()
+        if ndim not in [2, 3]:
+            raise ValueError('ndim must be 2 or 3')
+        self.ndim = ndim
     
-    # Output shape.
-    output_shape = list(x._keras_shape)
-    spatial_dims = set(range(ndim+2)).difference([0, channel_axis])
-    for dim in spatial_dims:
-        output_shape[dim] = output_shape[dim]//2 + output_shape[dim]%2
-    output_shape = tuple(output_shape[1:])
-    
-    # Execute subsampling in this layer
-    x = Lambda(subsample_func, output_shape=output_shape)(x)
-    
-    return x
+    def forward(self, input):
+        out = None
+        if self.ndim==2:
+            out = input[:,:,::2,::2]
+        elif self.ndim==3:
+            out = input[:,:,::2,::2,::2]
+        return out
 
 
 """
 Helper function to execute some upsampling mode.
 
-conv_kwargs are:
-filters : num filters
-init : kernel_initializer
-weight_decay : kernel_regularizer (l2)
+conv_kwargs are: in_channels, out_channels, kernel_size
 """
-def _upsample(x, mode, ndim, **conv_kwargs):
-    if mode=='repeat':
-        x = UpSampling(size=2, ndim=ndim)(x)
-    elif mode=='conv':
-        x = ConvolutionTranspose(ndim=ndim, 
-                                 strides=2,
-                                 padding='valid',
-                                 **conv_kwargs)(x)
-    else:
-        raise ValueError("Unrecognized upsample_mode: {}"
-                            "".format(upsample_mode))
-    return x
+class do_upsample(torch.nn.Module):
+    def __init__(self, mode, ndim, init=None, **conv_kwargs):
+        super(do_upsample, self).__init__()
+        if mode=='repeat':
+            self.op = torch.nn.Upsample(scale_factor=2)
+        elif mode=='conv':
+            self.op = convolution_transpose(ndim=ndim,
+                                            stride=2,
+                                            init=init,
+                                            **conv_kwargs)
+            self.in_channels = self.op.in_channels
+            self.out_channels = self.op.out_channels
+        else:
+            raise ValueError("Unrecognized upsample_mode: {}"
+                             "".format(upsample_mode))
+        self.mode = mode
+        self.ndim = ndim
+        self.init = init
+                             
+    def forward(self, input):
+        return self.op(input)
 
 
 """
-Helper to build a norm -> relu -> conv block
+Helper to build a norm -> ReLU -> conv block
 This is an improved scheme proposed in http://arxiv.org/pdf/1603.05027v2.pdf
 """
-def norm_nlin_conv(filters, kernel_size, subsample=False, upsample=False,
-                   upsample_mode='repeat', nonlinearity='relu',
-                   normalization=BatchNormalization, weight_decay=None, 
-                   norm_kwargs=None, init='he_normal', ndim=2, name=None):
-    if norm_kwargs is None:
-        norm_kwargs = {}
-    name = _get_unique_name('', name)
-        
-    def f(input):
-        processed = input
+class norm_nlin_conv(torch.nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size,
+                 subsample=False, upsample=False, upsample_mode='repeat',
+                 nonlinearity='ReLU', normalization=batch_normalization,
+                 norm_kwargs=None, init='kaiming_normal', ndim=2):
+        super(norm_nlin_conv, self).__init__()
+        if norm_kwargs is None:
+            norm_kwargs = {}
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.kernel_size = kernel_size
+        self.subsample = subsample
+        self.upsample = upsample
+        self.upsample_mode = upsample_mode
+        self.nonlinearity = nonlinearity
+        self.normalization = normalization
+        self.norm_kwargs = norm_kwargs
+        self.init = init
+        self.ndim =ndim
+        self.op = []
         if normalization is not None:
-            processed = normalization(name=name+"_norm",
-                                      **norm_kwargs)(processed)
-        processed = get_nonlinearity(nonlinearity)(processed)
+            self.op += [normalization(ndim=ndim,
+                                      num_features=in_channels,
+                                      **norm_kwargs)]
+        self.op += [get_nonlinearity(nonlinearity)]
         stride = 1
         if subsample:
             stride = 2
         if upsample:
-            processed = _upsample(processed,
-                                  mode=upsample_mode,
-                                  ndim=ndim,
-                                  filters=filters,
-                                  kernel_size=2,
-                                  kernel_initializer=init,
-                                  kernel_regularizer=_l2(weight_decay),
-                                  name=name+"_upconv")
-        return Convolution(filters=filters,
-                           kernel_size=kernel_size,
-                           ndim=ndim,
-                           strides=stride,
-                           kernel_initializer=init,
-                           padding='same',
-                           name=name+"_conv",
-                           kernel_regularizer=_l2(weight_decay))(processed)
-
-    return f
+            self.op += [do_upsample(mode=upsample_mode,
+                                    ndim=ndim,
+                                    in_channels=in_channels,
+                                    out_channels=in_channels,
+                                    kernel_size=2)]
+        self.op += [convolution(in_channels=in_channels,
+                                out_channels=out_channels,
+                                kernel_size=kernel_size,
+                                ndim=ndim,
+                                stride=stride,
+                                init=init,
+                                padding=kernel_size//2)]
+        
+    def forward(self, input):
+        out = input
+        for op in self.op:
+            out = op(out)
+        return out
 
 
 """
 Adds a shortcut between input and residual block and merges them with 'sum'.
 """
-def _shortcut(input, residual, subsample, upsample, upsample_mode='repeat',
-              weight_decay=None, init='he_normal', ndim=2, name=None):
-    name = _get_unique_name('shortcut', name)
-    channel_axis = get_channel_axis(ndim)
-    shortcut = input
+class shortcut(torch.nn.Module):
+    def __init__(self, in_channels, out_channels, subsample, upsample,
+                 upsample_mode='repeat', init='kaiming_normal', ndim=2):
+        super(shortcut, self).__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.subsample = subsample
+        self.upsample = upsample
+        self.upsample_mode = upsample_mode
+        self.init = init
+        self.ndim = ndim
+        self.op = []
+        
+        # Downsample input
+        if subsample:
+            self.op += [do_subsample(ndim=ndim)]
+            
+        # Upsample input
+        if upsample:
+            self.op += [do_upsample(mode=upsample_mode,
+                                    ndim=ndim,
+                                    in_channels=in_channels,
+                                    out_channels=in_channels,
+                                    kernel_size=2,
+                                    init=init)]
+        
+        # Expand channels of shortcut to match residual.
+        # Stride appropriately to match residual (width, height)
+        # Should be int if network architecture is correctly configured.
+        if in_channels != out_channels:
+            self.op += [convolution(in_channels=in_channels,
+                                    out_channels=out_channels,
+                                    kernel_size=1,
+                                    ndim=ndim,
+                                    init=init)]
     
-    # Downsample input
-    if subsample:
-        shortcut = _subsample(shortcut, ndim=ndim)
+    def forward(self, input, residual):
+        shortcut = input
+        for op in self.op:
+            shortcut = op(shortcut)
+        return residual+shortcut
         
-    # Upsample input
-    if upsample:
-        shortcut = _upsample(shortcut,
-                             mode=upsample_mode,
-                             ndim=ndim,
-                             filters=shortcut._keras_shape[channel_axis],
-                             kernel_size=2,
-                             kernel_initializer=init,
-                             kernel_regularizer=_l2(weight_decay),
-                             name=name+"_upconv")
         
-    # Expand channels of shortcut to match residual.
-    # Stride appropriately to match residual (width, height)
-    # Should be int if network architecture is correctly configured.
-    equal_channels = residual._keras_shape[channel_axis] == \
-                                            shortcut._keras_shape[channel_axis]
-    if not equal_channels:
-        shortcut = Convolution(filters=residual._keras_shape[channel_axis],
-                               kernel_size=1, ndim=ndim,
-                               kernel_initializer=init, padding='valid',
-                               kernel_regularizer=_l2(weight_decay),
-                               name=name+"_conv")(shortcut)
-    
-    out = merge_add([shortcut, residual])
-        
-    return out
+"""
+Defaults block class - defines arguments that all blocks must have.
 
+NOTE: Blocks are expected to have an out_channels attribute but not an
+      out_channels argument. This attribute must be computed in the block.
+"""
+class block_abstract(torch.nn.Module):
+    def __init__(self, in_channels, num_filters, subsample, upsample):
+        super(block_abstract, self).__init__()
+        self.in_channels = in_channels
+        self.num_filters = num_filters
+        self.subsample = subsample
+        self.upsample = upsample
+        
+    def forward(self, input):
+        raise NotImplemented()
+        
+    def get_out_channels(self):
+        if not hasattr(self, 'out_channels'):
+            raise NotImplemented("Blocks are expected to have an "
+                                 "out_channels attribute but not an "
+                                 "out_channels argument. This attribute must "
+                                 "be computed in the block.")
+        return self.out_channels
 
+        
 """
 Identity block - do nothing except handle subsampling + upsampling.
 """
-def identity_block(subsample=False, upsample=False, upsample_mode='repeat',
-                   ndim=2, filters=32, kernel_size=2, init='he_normal',
-                   weight_decay=0.0001, name=None):
-    name = _get_unique_name('identity', name)
-    def f(input):
-        output = input
+class identity_block(block_abstract):
+    def __init__(self, in_channels, num_filters, subsample=False,
+                 upsample=False, upsample_mode='repeat', ndim=2,
+                 kernel_size=2, init='kaiming_normal'):
+        super(identity_block, self).__init__(in_channels, num_filters,
+                                             subsample, upsample)
+        self.out_channels = num_filters
+        self.upsample_mode = upsample_mode
+        self.ndim = ndim
+        self.kernel_size = kernel_size
+        self.init = init
+        self.op = []
         if subsample:
-            output = _subsample(output, ndim=ndim)
+            self.op += [do_subsample(ndim=ndim)]
         if upsample:
-            output = _upsample(output,
-                               mode=upsample_mode,
-                               ndim=ndim,
-                               filters=filters,
-                               kernel_size=2,
-                               kernel_initializer=init,
-                               kernel_regularizer=_l2(weight_decay),
-                               name=name+"_upconv")
-        return output
-    return f
-
+            self.op += [updample(mode=upsample_mode,
+                                 ndim=ndim,
+                                 in_channels=in_channels,
+                                 out_channels=num_filters,
+                                 kernel_size=2,
+                                 init=init)]
+        
+    def forward(self, input):
+        out = input
+        for op in self.op:
+            out = op(out)
+        return out
+        
 
 """
 Bottleneck architecture for > 34 layer resnet.
 Follows improved proposed scheme in http://arxiv.org/pdf/1603.05027v2.pdf
-Returns a final conv layer of filters * 4
+Returns a representation with num_filters*4 channels.
 """
-def bottleneck(filters, subsample=False, upsample=False,
-               upsample_mode='repeat', skip=True, dropout=0.,
-               normalization=BatchNormalization, weight_decay=None,
-               norm_kwargs=None, init='he_normal', nonlinearity='relu',
-               ndim=2, name=None):
-    name = _get_unique_name('bottleneck', name)
-    def f(input):
-        output = norm_nlin_conv(filters,
-                                kernel_size=1,
-                                subsample=subsample,
-                                normalization=normalization,
-                                weight_decay=weight_decay,
-                                norm_kwargs=norm_kwargs,
-                                init=init,
-                                nonlinearity=nonlinearity,
-                                ndim=ndim,
-                                name=name)(input)
-        output = norm_nlin_conv(filters,
-                                kernel_size=3,
-                                normalization=normalization,
-                                weight_decay=weight_decay,
-                                norm_kwargs=norm_kwargs,
-                                init=init,
-                                nonlinearity=nonlinearity,
-                                ndim=ndim,
-                                name=name)(output)
-        output = norm_nlin_conv(filters * 4,
-                                kernel_size=1,
-                                upsample=upsample,
-                                upsample_mode=upsample_mode,
-                                normalization=normalization,
-                                weight_decay=weight_decay,
-                                norm_kwargs=norm_kwargs,
-                                init=init,
-                                nonlinearity=nonlinearity,
-                                ndim=ndim,
-                                name=name)(output)
+class bottleneck(block_abstract):
+    def __init__(self, in_channels, num_filters, subsample=False,
+                 upsample=False, upsample_mode='repeat', skip=True,
+                 dropout=0., normalization=batch_normalization,
+                 norm_kwargs=None, init='kaiming_normal',
+                 nonlinearity='ReLU', ndim=2):
+        super(bottleneck, self).__init__(in_channels, num_filters,
+                                         subsample, upsample)
+        if norm_kwargs is None:
+            norm_kwargs = {}
+        self.out_channels = num_filters*4
+        self.upsample_mode = upsample_mode
+        self.skip = skip
+        self.dropout = dropout
+        self.normalization = normalization
+        self.norm_kwargs = norm_kwargs
+        self.init = init
+        self.nonlinearity = nonlinearity
+        self.ndim = ndim
+        self.op = []
+        self.op += [norm_nlin_conv(in_channels=in_channels,
+                                   out_channels=num_filters,
+                                   kernel_size=1,
+                                   subsample=subsample,
+                                   normalization=normalization,
+                                   norm_kwargs=norm_kwargs,
+                                   init=init,
+                                   nonlinearity=nonlinearity,
+                                   ndim=ndim)]
+        self.op += [norm_nlin_conv(in_channels=num_filters,
+                                   out_channels=num_filters,
+                                   kernel_size=3,
+                                   normalization=normalization,
+                                   norm_kwargs=norm_kwargs,
+                                   init=init,
+                                   nonlinearity=nonlinearity,
+                                   ndim=ndim)]
+        self.op += [norm_nlin_conv(in_channels=num_filters,
+                                   out_channels=num_filters*4,
+                                   kernel_size=1,
+                                   upsample=upsample,
+                                   upsample_mode=upsample_mode,
+                                   normalization=normalization,
+                                   norm_kwargs=norm_kwargs,
+                                   init=init,
+                                   nonlinearity=nonlinearity,
+                                   ndim=ndim)]        
         if dropout > 0:
-            output = get_dropout(dropout, nonlinearity)(output)
-            
+            self.op += [get_dropout(dropout, nonlinearity)]
+        self.op_shortcut = None
         if skip:
-            output = _shortcut(input, output,
-                               subsample=subsample, upsample=upsample,
-                               upsample_mode=upsample_mode,
-                               weight_decay=weight_decay, init=init,
-                               ndim=ndim, name=name)
-        return output
-
-    return f
+            self.op_shortcut = shortcut(in_channels=in_channels,
+                                        out_channels=num_filters*4,
+                                        subsample=subsample,
+                                        upsample=upsample,
+                                        upsample_mode=upsample_mode,
+                                        init=init,
+                                        ndim=ndim)
+            
+    def forward(self, input):
+        out = input
+        for op in self.op:
+            out = op(out)
+        if self.skip:
+            out = self.op_shortcut(input, out)
+        return out
 
 
 """
@@ -348,361 +436,487 @@ Basic 3 X 3 convolution blocks.
 Use for resnet with layers <= 34
 Follows improved proposed scheme in http://arxiv.org/pdf/1603.05027v2.pdf
 """
-def basic_block(filters, subsample=False, upsample=False,
-                upsample_mode='repeat', skip=True, dropout=0.,
-                normalization=BatchNormalization, weight_decay=None,
-                norm_kwargs=None, init='he_normal', nonlinearity='relu',
-                ndim=2, name=None):
-    name = _get_unique_name('basic_block', name)
-    def f(input):
-        output = norm_nlin_conv(filters,
-                                kernel_size=3,
-                                subsample=subsample,
-                                normalization=normalization,
-                                weight_decay=weight_decay,
-                                norm_kwargs=norm_kwargs,
-                                init=init,
-                                nonlinearity=nonlinearity,
-                                ndim=ndim,
-                                name=name)(input)
+class basic_block(block_abstract):
+    def __init__(self, in_channels, num_filters, subsample=False,
+                 upsample=False, upsample_mode='repeat', skip=True, dropout=0.,
+                 normalization=batch_normalization, norm_kwargs=None,
+                 init='kaiming_normal', nonlinearity='ReLU', ndim=2):
+        super(basic_block, self).__init__(in_channels, num_filters,
+                                          subsample, upsample)
+        if norm_kwargs is None:
+            norm_kwargs = {}
+        self.out_channels = num_filters
+        self.upsample_mode = upsample_mode
+        self.skip = skip
+        self.dropout = dropout
+        self.normalization = normalization
+        self.norm_kwargs = norm_kwargs
+        self.init = init
+        self.nonlinearity = nonlinearity
+        self.ndim = ndim
+        self.op = []
+        self.op += [norm_nlin_conv(in_channels=in_channels,
+                                   out_channels=num_filters,
+                                   kernel_size=3,
+                                   subsample=subsample,
+                                   normalization=normalization,
+                                   norm_kwargs=norm_kwargs,
+                                   init=init,
+                                   nonlinearity=nonlinearity,
+                                   ndim=ndim)]
         if dropout > 0:
-            output = Dropout(dropout)(output)
-        output = norm_nlin_conv(filters,
-                                kernel_size=3,
-                                upsample=upsample,
-                                upsample_mode=upsample_mode,
-                                normalization=normalization,
-                                weight_decay=weight_decay,
-                                norm_kwargs=norm_kwargs,
-                                init=init,
-                                nonlinearity=nonlinearity,
-                                ndim=ndim,
-                                name=name)(output)
-        
+            self.op += [get_dropout(dropout, nonlin=nonlinearity)]
+        self.op += [norm_nlin_conv(in_channels=num_filters,
+                                   out_channels=num_filters,
+                                   kernel_size=3,
+                                   upsample=upsample,
+                                   upsample_mode=upsample_mode,
+                                   normalization=normalization,
+                                   norm_kwargs=norm_kwargs,
+                                   init=init,
+                                   nonlinearity=nonlinearity,
+                                   ndim=ndim)]
+        self.op_shortcut = None
         if skip:
-            output = _shortcut(input, output,
-                               subsample=subsample,
-                               upsample=upsample,
-                               upsample_mode=upsample_mode,
-                               weight_decay=weight_decay,
-                               init=init,
-                               ndim=ndim,
-                               name=name)
-        return output
-
-    return f
+            self.op_shortcut = shortcut(in_channels=in_channels,
+                                        out_channels=num_filters,
+                                        subsample=subsample,
+                                        upsample=upsample,
+                                        upsample_mode=upsample_mode,
+                                        init=init,
+                                        ndim=ndim)
+                                     
+    def forward(self, input):
+        out = input
+        for op in self.op:
+            out = op(out)
+        if self.skip:
+            out = self.op_shortcut(input, out)
+        return out
 
 
 """
 A single basic 3x3 convolution.
 """
-def basic_block_mp(filters, subsample=False, upsample=False,
-                   upsample_mode='repeat', skip=True, dropout=0.,
-                   normalization=BatchNormalization, weight_decay=None,
-                   norm_kwargs=None, init='he_normal', nonlinearity='relu',
-                   ndim=2, name=None):
-    if norm_kwargs is None:
-        norm_kwargs = {}
-    name = _get_unique_name('basic_block_mp', prefix=name)
-    
-    def f(input):
-        output = input
+class tiny_block(block_abstract):
+    def __init__(self, in_channels, num_filters, subsample=False,
+                 upsample=False, upsample_mode='repeat', skip=True, dropout=0.,
+                 normalization=batch_normalization, norm_kwargs=None,
+                 init='kaiming_normal', nonlinearity='ReLU', ndim=2):
+        super(tiny_block, self).__init__(in_channels, num_filters,
+                                             subsample, upsample)
+        if norm_kwargs is None:
+            norm_kwargs = {}
+        self.out_channels = num_filters
+        self.upsample_mode = upsample_mode
+        self.skip = skip
+        self.dropout = dropout
+        self.normalization = normalization
+        self.norm_kwargs = norm_kwargs
+        self.init = init
+        self.nonlinearity = nonlinearity
+        self.ndim = ndim
+        self.op = []
         if normalization is not None:
-            output = normalization(name=name+"_norm", **norm_kwargs)(output)
-        output = get_nonlinearity(nonlinearity)(output)
+            self.op += [normalization(ndim=ndim,
+                                      num_features=in_channels,
+                                      **norm_kwargs)]
+        self.op += [get_nonlinearity(nonlinearity)]
         if subsample:
-            output = MaxPooling(pool_size=2, ndim=ndim)(output)
-        output = Convolution(filters=filters, kernel_size=3, 
-                             ndim=ndim,
-                             kernel_initializer=init,
-                             padding='same',
-                             kernel_regularizer=_l2(weight_decay),
-                             name=name+"_conv")(output)
+            self.op += [max_pooling(kernel_size=2, ndim=ndim)]
+        self.op += [convolution(in_channels=in_channels,
+                                out_channels=num_filters,
+                                kernel_size=3, 
+                                ndim=ndim,
+                                init=init,
+                                padding=1)]
         if dropout > 0:
-            output = get_dropout(dropout, nonlinearity)(output)
+            self.op += [get_dropout(dropout, nonlinearity)]
         if upsample:
-            output = _upsample(output,
-                               mode=upsample_mode,
-                               ndim=ndim,
-                               filters=filters,
-                               kernel_size=2,
-                               kernel_initializer=init,
-                               kernel_regularizer=_l2(weight_decay),
-                               name=name+"_upconv")
-            
+            self.op += [do_upsample(mode=upsample_mode,
+                                    ndim=ndim,
+                                    in_channels=num_filters,
+                                    out_channels=num_filters,
+                                    kernel_size=2,
+                                    init=init)]
+        self.op_shortcut = None
         if skip:
-            output = _shortcut(input, output,
-                               subsample=subsample, upsample=upsample,
-                               upsample_mode=upsample_mode,
-                               weight_decay=weight_decay, init=init,
-                               ndim=ndim, name=name)
-        return output
-    
-    return f
+            self.op_shortcut = shortcut(in_channels=in_channels,
+                                        out_channels=num_filters,
+                                        subsample=subsample,
+                                        upsample=upsample,
+                                        upsample_mode=upsample_mode,
+                                        init=init,
+                                        ndim=ndim)
 
+    def forward(self, input):
+        out = input
+        for op in self.op:
+            out = op(out)
+        if self.skip:
+            out = self.op_shortcut(input, out)
+        return out
 
 """
-Builds a residual block with repeating sub-blocks.
+Builds a block with repeating sub-blocks.
 """
-def residual_block(block_function, filters, repetitions, skip=True,
-                   dropout=0., subsample=False, upsample=False,
-                   upsample_mode='repeat', normalization=BatchNormalization,
-                   weight_decay=None, norm_kwargs=None, init='he_normal',
-                   nonlinearity='relu', ndim=2, name=None):
-    if repetitions<=0:
-        raise ValueError("block repetitions (block depth) must be greater than "
-                         "zero")
-    def f(input):
-        x = input
+class repeat_block(block_abstract):
+    def __init__(self, block_function, in_channels, num_filters, repetitions,
+                 skip=True, dropout=0., subsample=False, upsample=False,
+                 upsample_mode='repeat', normalization=batch_normalization,
+                 norm_kwargs=None, init='kaiming_normal', nonlinearity='ReLU',
+                 ndim=2):
+        super(repeat_block, self).__init__(in_channels, num_filters,
+                                           subsample, upsample)
+        if repetitions<=0:
+            raise ValueError("block repetitions (block depth) must be greater "
+                            "than zero")
+        if norm_kwargs is None:
+            norm_kwargs = {}
+        self.block_function = block_function
+        self.repetitions = repetitions
+        self.skip = skip
+        self.dropout = dropout
+        self.upsample_mode = upsample_mode
+        self.normalization = normalization
+        self.norm_kwargs = norm_kwargs
+        self.init = init
+        self.nonlinearity = nonlinearity
+        self.ndim = ndim
+        self.blocks = []   
+        last_out_channels = None
         for i in range(repetitions):
             subsample_i = subsample if i==0 else False
             upsample_i = upsample if i==repetitions-1 else False
-            x = block_function(filters=filters,
-                               skip=skip,
-                               dropout=dropout,
-                               subsample=subsample_i,
-                               upsample=upsample_i,
-                               upsample_mode=upsample_mode,
-                               normalization=normalization,
-                               norm_kwargs=norm_kwargs,
-                               weight_decay=weight_decay,
-                               nonlinearity=nonlinearity,
-                               init=init,
-                               ndim=ndim,
-                               name=name)(x)
-        return x
-
-    return f 
+            in_channels_i = in_channels if i==0 else last_out_channels
+            block = block_function(in_channels=in_channels_i,
+                                   num_filters=num_filters,
+                                   skip=skip,
+                                   dropout=dropout,
+                                   subsample=subsample_i,
+                                   upsample=upsample_i,
+                                   upsample_mode=upsample_mode,
+                                   normalization=normalization,
+                                   norm_kwargs=norm_kwargs,
+                                   nonlinearity=nonlinearity,
+                                   init=init,
+                                   ndim=ndim)
+            last_out_channels = block.get_out_channels()
+            self.blocks.append(block)
+        self.out_channels = block.out_channels
+        
+    def forward(self, input):
+        out = input
+        for op in self.blocks:
+            out = op(out)
+        return out       
 
 
 """
 Two basic 3x3 convolutions with 2x2 conv upsampling, as in the UNet.
 Subsampling, upsampling, and dropout handled as in the UNet.
 """
-def unet_block(filters, subsample=False, upsample=False, upsample_mode='conv',
-               halve_features_on_upsample=True, skip=False, dropout=0.,
-               normalization=None, weight_decay=None, norm_kwargs=None,
-               init='he_normal', nonlinearity='relu', ndim=2, name=None):
-    name = _get_unique_name('unet_block', name)
-    if norm_kwargs is None:
-        norm_kwargs = {}
+class unet_block(block_abstract):
+    def __init__(self, in_channels, num_filters, subsample=False,
+                 upsample=False, upsample_mode='conv', 
+                 halve_features_on_upsample=True, skip=False, dropout=0.,
+                 normalization=None, norm_kwargs=None, init='kaiming_normal',
+                 nonlinearity='ReLU', ndim=2):
+        super(unet_block, self).__init__(in_channels, num_filters,
+                                         subsample, upsample)
+        if norm_kwargs is None:
+            norm_kwargs = {}
+        self.upsample_mode = upsample_mode
+        self.halve_features_on_upsample = halve_features_on_upsample
+        self.skip = skip
+        self.dropout = dropout
+        self.normalization = normalization
+        self.norm_kwargs = norm_kwargs
+        self.init = init
+        self.nonlinearity = nonlinearity
+        self.ndim = ndim
+        self.op = []
         
-    # Filters can be an int or a tuple/list
-    if hasattr(filters, '__len__'):
-        filters_1, filters_2 = filters
-    else:
-        filters_1 = filters_2 = filters
-        
-    def f(input):
-        output = input
+        # Filters can be an int or a tuple/list
+        if hasattr(num_filters, '__len__'):
+            num_filters_1, num_filters_2 = num_filters
+        else:
+            num_filters_1 = num_filters_2 = num_filters
+            
         if subsample:
-            output = MaxPooling(pool_size=2, ndim=ndim)(output)
-        output = Convolution(filters=filters_1,
-                             kernel_size=3,
-                             ndim=ndim,
-                             kernel_initializer=init,
-                             padding='same',
-                             kernel_regularizer=_l2(weight_decay),
-                             name=name+"_conv")(output)
-        output = norm_nlin_conv(filters=filters_2,
+            self.op += [max_pooling(kernel_size=2, ndim=ndim)]
+        self.op += [convolution(in_channels=in_channels,
+                                out_channels=num_filters_1,
                                 kernel_size=3,
-                                normalization=normalization,
-                                weight_decay=weight_decay,
-                                norm_kwargs=norm_kwargs,
-                                init=init,
-                                nonlinearity=nonlinearity,
                                 ndim=ndim,
-                                name=name)(output)
+                                init=init,
+                                padding=1)]
+        self.op += [norm_nlin_conv(in_channels=num_filters_1,
+                                   out_channels=num_filters_2,
+                                   kernel_size=3,
+                                   normalization=normalization,
+                                   norm_kwargs=norm_kwargs,
+                                   init=init,
+                                   nonlinearity=nonlinearity,
+                                   ndim=ndim)]
         if normalization is not None:
-            output = normalization(name=name+"_norm", **norm_kwargs)(output)
-        output = get_nonlinearity(nonlinearity)(output)
+            self.op += [normalization(ndim=ndim,
+                                      num_features=num_filters_2,
+                                      **norm_kwargs)]
+        self.op += [get_nonlinearity(nonlinearity)]
         if dropout > 0:
-            output = get_dropout(dropout, nonlinearity)(output)
+            self.op += [get_dropout(dropout, nonlinearity)]
+        out_channels = num_filters_2
         if upsample:
             # "up-convolution" in standard 2D unet halves the number of 
             # feature maps - but not in the standard 3D unet. It's just a
             # user-settable option in this block, regardless of ndim.
             if halve_features_on_upsample:
-                filters_up = filters_2//2
+                out_channels_up = num_filters_2//2
+                if upsample_mode=='repeat':
+                    self.op += [convolution(in_channels=num_filters_2,
+                                            out_channels=out_channels_up,
+                                            kernel_size=1,
+                                            ndim=ndim,
+                                            init=init)]
             else:
-                filters_up = filters_2
-            output = _upsample(output,
-                               mode=upsample_mode,
-                               ndim=ndim,
-                               filters=filters_up,
-                               kernel_size=2,
-                               kernel_initializer=init,
-                               kernel_regularizer=_l2(weight_decay),
-                               name=name+"_upconv")
-            output = get_nonlinearity(nonlinearity)(output)
+                out_channels_up = num_filters_2
+            self.op += [do_upsample(mode=upsample_mode,
+                                    ndim=ndim,
+                                    kernel_size=2,
+                                    in_channels=num_filters_2,
+                                    out_channels=out_channels_up,
+                                    init=init)]
+            
+            self.op += [get_nonlinearity(nonlinearity)]
+            out_channels = out_channels_up
+        self.out_channels = out_channels
+        self.op_shortcut = None
         if skip:
-            output = _shortcut(input, output,
-                               subsample=subsample,
-                               upsample=upsample,
-                               upsample_mode=upsample_mode,
-                               weight_decay=weight_decay,
-                               init=init,
-                               ndim=ndim,
-                               name=name)
-        return output
+            self.op_shortcut = shortcut(in_channels=in_channels,
+                                        out_channels=out_channels,
+                                        subsample=subsample,
+                                        upsample=upsample,
+                                        upsample_mode=upsample_mode,
+                                        init=init,
+                                        ndim=ndim)
 
-    return f
-
+    def forward(self, input):
+        out = input
+        for op in self.op:
+            out = op(out)
+        if self.skip:
+            out = self.op_shortcut(input, out)
+        return out
+    
 
 """
 Processing block as in the VNet.
 """
-def vnet_block(filters, num_conv=3, subsample=False, upsample=False,
-               upsample_mode='conv', skip=True, dropout=0., normalization=None,
-               norm_kwargs=None,
-               init=VarianceScaling(scale=3., mode='fan_avg'),
-               weight_decay=None, nonlinearity='relu', ndim=3, name=None):
-    name = _get_unique_name('vnet_block', name)
-    if norm_kwargs is None:
-        norm_kwargs = {}
-    def f(input):
-        output = input
+class vnet_block(block_abstract):
+    def __init__(self, in_channels, num_filters, num_conv=3, subsample=False,
+                 upsample=False, upsample_mode='conv', skip=True, dropout=0.,
+                 normalization=None, norm_kwargs=None, init='xavier_uniform',
+                 nonlinearity='ReLU', ndim=3):
+        super(vnet_block, self).__init__(in_channels, num_filters,
+                                         subsample, upsample)
+        if norm_kwargs is None:
+            norm_kwargs = {}
+        self.out_channels = num_filters
+        self.num_conv = num_conv
+        self.upsample_mode = upsample_mode
+        self.skip = skip
+        self.dropout = dropout
+        self.normalization = normalization
+        self.norm_kwargs = norm_kwargs
+        self.init = init
+        self.nonlinearity = nonlinearity
+        self.ndim = ndim
+        self.op = []
         if subsample:
-            output = Convolution(filters=filters,
-                                 kernel_size=2,
-                                 strides=2,
-                                 ndim=ndim,
-                                 kernel_initializer=init,
-                                 padding='same',
-                                 kernel_regularizer=_l2(weight_decay),
-                                 name=name+"_downconv")(output)
-        for i in range(num_conv):
-            output = norm_nlin_conv(filters,
-                                    kernel_size=5,
-                                    normalization=normalization,
-                                    weight_decay=weight_decay,
-                                    norm_kwargs=norm_kwargs,
-                                    init=init,
-                                    nonlinearity=nonlinearity,
+            self.op += [convolution(in_channels=in_channels,
+                                    out_channels=in_channels,
+                                    kernel_size=2,
+                                    stride=2,
                                     ndim=ndim,
-                                    name=name)(output)
+                                    init=init,
+                                    padding=0)]
+        for i in range(num_conv):
+            in_channels_i = in_channels if i==0 else num_filters
+            self.op += [norm_nlin_conv(in_channels=in_channels_i,
+                                       out_channels=num_filters,
+                                       kernel_size=5,
+                                       normalization=normalization,
+                                       norm_kwargs=norm_kwargs,
+                                       init=init,
+                                       nonlinearity=nonlinearity,
+                                       ndim=ndim)]
         
             if dropout > 0:
-                output = get_dropout(dropout, nonlinearity)(output)
+                self.op += [get_dropout(dropout, nonlinearity)]
+        self.op_shortcut = None
         if skip:
-            output = _shortcut(input, output,
-                               subsample=subsample,
-                               upsample=False,
-                               upsample_mode=upsample_mode,
-                               weight_decay=weight_decay,
-                               init=init,
-                               ndim=ndim,
-                               name=name)
+            self.op_shortcut = shortcut(in_channels=in_channels,
+                                        out_channels=num_filters,
+                                        subsample=subsample,
+                                        upsample=False,
+                                        upsample_mode=upsample_mode,
+                                        init=init,
+                                        ndim=ndim)
+        self.op_upsample = []
+        out_channels = num_filters
         if upsample:
             # "up-convolution" also halves the number of feature maps.
             if normalization is not None:
-                output = normalization(name=name+"_norm", **norm_kwargs)(output)
-            output = get_nonlinearity(nonlinearity)(output)
-            output = _upsample(output,
-                               mode=upsample_mode,
-                               ndim=ndim,
-                               filters=filters//2,
-                               kernel_size=2,
-                               kernel_initializer=init,
-                               kernel_regularizer=_l2(weight_decay),
-                               name=name+"_upconv")
-            output = get_nonlinearity(nonlinearity)(output)
-        return output
+                self.op_upsample += [normalization(ndim=ndim,
+                                                   num_features=num_filters,
+                                                   **norm_kwargs)]
+            self.op_upsample += [get_nonlinearity(nonlinearity)]
+            self.op_upsample += [do_upsample(mode=upsample_mode,
+                                             ndim=ndim,
+                                             in_channels=num_filters,
+                                             out_channels=num_filters//2,
+                                             kernel_size=2,
+                                             init=init)]
+            self.op_upsample += [get_nonlinearity(nonlinearity)]
+            out_channels = num_filters//2
+        self.out_channels = out_channels
 
-    return f
-
+    def forward(self, input):
+        out = input
+        for op in self.op:
+            out = op(out)
+        if self.skip:
+            out = self.op_shortcut(input, out)
+        for op in self.op_upsample:
+            out = op(out)
+        return out
+    
 
 """
 Dense block (as in a DenseNet), as implemented in the 100 layer Tiramisu.
+
+NOTE: Unlike in other blocks, out_channels is set automatically, depending on
+      the following arguments: num_filters, skip_merge_mode, merge_input.
 
 paper : https://arxiv.org/abs/1611.09326 (version 2)
 code  : https://github.com/SimJeg/FC-DenseNet
         commit ee933144949d82ada32198e49d76b708f60e4
 """
-def dense_block(filters, block_depth=4, subsample=False, upsample=False,
-                upsample_mode='conv', skip_merge_mode='concat',
-                merge_input=True, dropout=0., normalization=BatchNormalization,
-                norm_kwargs=None, weight_decay=None, init='he_uniform',
-                nonlinearity='relu', ndim=2, name=None):
-    name = _get_unique_name('dense_block', name)
-    if norm_kwargs is None:
-        norm_kwargs = {}        
-    channel_axis = get_channel_axis(ndim)
+class dense_block(block_abstract):
+    def __init__(self, in_channels, num_filters, block_depth=4,
+                 subsample=False, upsample=False, upsample_mode='conv',
+                 skip_merge_mode='concat', merge_input=True, dropout=0.,
+                 normalization=batch_normalization, norm_kwargs=None,
+                 init='kaiming_uniform', nonlinearity='ReLU', ndim=2):
+        super(dense_block, self).__init__(in_channels, num_filters,
+                                          subsample, upsample)
+        if norm_kwargs is None:
+            norm_kwargs = {}
+        out_channels = num_filters*block_depth + in_channels*merge_input
+        if skip_merge_mode=='sum':
+            out_channels = num_filters
+        self.out_channels = out_channels
+        self.block_depth = block_depth
+        self.updample_mode = upsample_mode
+        self.skip_merge_mode = skip_merge_mode
+        self.merge_input = merge_input
+        self.dropout = dropout
+        self.normalization = normalization
+        self.norm_kwargs = norm_kwargs
+        self.init = init
+        self.nonlinearity = nonlinearity
+        self.ndim = ndim
+        self.op = []
         
-    def f(input):
-        output = input
-        
-        # Transition down (preserve num filters)
+        # Transition down (preserve num out_channels)
         if subsample:
-            output = norm_nlin_conv(filters=output._keras_shape[channel_axis],
-                                    kernel_size=1,
-                                    normalization=normalization,
-                                    weight_decay=weight_decay,
-                                    norm_kwargs=norm_kwargs,
-                                    init=init,
-                                    nonlinearity=nonlinearity,
-                                    ndim=ndim,
-                                    name=name)(output)
+            self.op += [norm_nlin_conv(in_channels=in_channels,
+                                       out_channels=in_channels,
+                                       kernel_size=1,
+                                       normalization=normalization,
+                                       norm_kwargs=norm_kwargs,
+                                       init=init,
+                                       nonlinearity=nonlinearity,
+                                       ndim=ndim)]
             if dropout > 0:
-                output = get_dropout(dropout, nonlinearity)(output)
-            output = MaxPooling(pool_size=2, ndim=ndim)(output)
-        
-        # Book keeping.
-        tensors = [output]
-        
+                self.op += [get_dropout(dropout, nonlinearity)]
+            self.op += [max_pooling(kernel_size=2, ndim=ndim)]
+            
         # If 'sum' mode, make the channel dimension match.
         if skip_merge_mode=='sum':
-            if tensors[0]._keras_shape[channel_axis] != filters:
-                tensors[0] = Convolution(filters=filters,
-                                         kernel_size=1,
-                                         ndim=ndim,
-                                         kernel_initializer=init,
-                                         padding='valid',
-                                         kernel_regularizer=_l2(weight_decay),
-                                         name=name+"_adapt_conv")(tensors[0])
-                
+            if in_channels != num_filters:
+                self.op += [convolution(in_channels=in_channels,
+                                        out_channels=num_filters,
+                                        kernel_size=1,
+                                        ndim=ndim,
+                                        init=init,
+                                        padding=0)]
+
         # Build the dense block.
+        self.op_dense = []
         for i in range(block_depth):
-            output = norm_nlin_conv(filters,
-                                    kernel_size=3,
-                                    normalization=normalization,
-                                    weight_decay=weight_decay,
-                                    norm_kwargs=norm_kwargs,
-                                    init=init,
-                                    nonlinearity=nonlinearity,
-                                    ndim=ndim,
-                                    name=name)(output)
+            op = []            
+            in_channels_i = in_channels + num_filters*i
+            if skip_merge_mode=='sum':
+                in_channels_i = num_filters
+            op += [norm_nlin_conv(in_channels=in_channels_i,
+                                  out_channels=num_filters,
+                                  kernel_size=3,
+                                  normalization=normalization,
+                                  norm_kwargs=norm_kwargs,
+                                  init=init,
+                                  nonlinearity=nonlinearity,
+                                  ndim=ndim)]
             if dropout > 0:
-                output = get_dropout(dropout, nonlinearity)(output)
-            tensors.append(output)
-            output = merge(tensors, mode=skip_merge_mode)
+                op += [get_dropout(dropout, nonlinearity)]
+            self.op_dense.append(op)
+            
+        # Transition up (maintain num out_channels)
+        self.op_upsample = []
+        if upsample:
+            self.op_upsample += [do_upsample(mode=upsample_mode,
+                                             ndim=ndim,
+                                             in_channels=out_channels,
+                                             out_channels=out_channels,
+                                             kernel_size=3,
+                                             init=init)]
+    
+    def forward(self, input):
+        # Prepare input.
+        out = input
+        for op in self.op:
+            out = op(out)
+        
+        # Build dense block.
+        tensors = [out]
+        for op in self.op_dense:
+            if hasattr(op, '__len__'):
+                for sub_op in op:
+                    out = sub_op(out)
+            else:
+                out = op(out)
+            tensors.append(out)
+            out = merge(tensors, mode=self.skip_merge_mode)
         
         # Block's output - merge input in?
         #
         # Regardless, all representations inside the block (all conv outputs)
         # are merged together, forming a dense skip pattern.
-        output = tensors[-1]
-        if merge_input:
+        out = tensors[-1]
+        if self.merge_input:
             # Merge the block's input into its output.
             if len(tensors) > 1:
-                output = merge(tensors, mode=skip_merge_mode)
+                out = merge(tensors, mode=self.skip_merge_mode)
         else:
             # Avoid merging the block's input into its output.
-            # With this, one can avoid exponential growth in num of filters.
+            # With this, one can avoid exponential growth in num of
+            # out_channels.
             if len(tensors[1:]) > 1:
-                output = merge(tensors[1:], mode=skip_merge_mode)
+                out = merge(tensors[1:], mode=self.skip_merge_mode)
         
-        # Transition up (maintain num filters)
-        if upsample:
-            output = _upsample(output,
-                               mode=upsample_mode,
-                               ndim=ndim,
-                               filters=output._keras_shape[channel_axis],
-                               kernel_size=3,
-                               kernel_initializer=init,
-                               kernel_regularizer=_l2(weight_decay),
-                               name=name+"_upconv")
+        # Upsample
+        for op in self.op_upsample:
+            out = op(out)
         
-        return output
-    
-    return f
+        return out

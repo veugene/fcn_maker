@@ -1,258 +1,262 @@
 from __future__ import (print_function,
                         division)
-from keras.models import Model
-from keras.layers import (Input,
-                          Activation,
-                          Dense,
-                          Permute,
-                          Lambda,
-                          add,
-                          concatenate)
-from keras.layers.normalization import BatchNormalization
-from keras import backend as K
-from keras.regularizers import l2
-from keras.initializers import VarianceScaling
+from collections import defaultdict
 import numpy as np
-from .blocks import (Convolution,
+import torch
+import torch.nn.functional as F
+from .blocks import (convolution,
+                     batch_normalization,
                      get_nonlinearity,
-                     get_channel_axis,
+                     merge,
                      bottleneck,
                      basic_block,
-                     basic_block_mp,
-                     residual_block,
+                     tiny_block,
+                     repeat_block,
                      unet_block,
                      vnet_block,
                      dense_block,
                      identity_block)
-
-
-def _l2(decay):
-    """
-    Return a new instance of l2 regularizer, or return None
-    """
-    if decay is not None:
-        return l2(decay)
-    else:
-        return None
-    
-
-def _softmax(x):
-    """
-    Softmax that works on ND inputs.
-    """
-    channel_axis = get_channel_axis(K.ndim(x)-2)
-    e = K.exp(x - K.max(x, axis=channel_axis, keepdims=True))
-    s = K.sum(e, axis=channel_axis, keepdims=True)
-    return e / s
-
-
-def _unique(name):
-    """
-    Return a unique name string.
-    """
-    return name + '_' + str(K.get_uid(name))
     
     
-def assemble_model(input_shape, num_classes, blocks,
-                   preprocessor=None, postprocessor=None,
-                   long_skip=True, long_skip_merge_mode='concat',
-                   init='he_normal', weight_decay=0.0001, ndim=2,
-                   verbose=True):
+class fcn(torch.nn.Module):
     """
-    input_shape : A tuple specifiying the image input shape.
+    in_channels : Number of channels in the input.
     num_classes : The number of classes in the segmentation output. If None,
         no classifier will be assembled.
     blocks : A list of tuples, each containing a block function and a
         dictionary of keyword arguments to pass to it. The length must be
         odd-valued. The first set of blocks before the middle one is assumed
         to be on the downsampling (encoder) path; the second set after the
-        middle one is assumed to be on the upsampling (decoder) path.
-        If instead of a tuple, a None is passed, the corresponding block will
-        simply preserve its input, passing it onto the next block.
-    preprocessor : A block/layer/model. The model input is run through the 
-        preprocessor before being passed to the first block.
-    postprocessor : A block/layer/model. The output of the last block is passed
-        through the postprocessor before being passed to the classifier.
+        middle one is assumed to be on the upsampling (decoder) path. The 
+        first and last block do not change resolution. If instead of a tuple,
+        a None is passed, the corresponding block will simply preserve its
+        input, passing it onto the next block.
     long_skip : A boolean specifying whether to use long skip connections
         from the downward path to the upward path. These can either concatenate
         or sum features across.
     long_skip_merge_mode : Either or 'sum', 'concat' features across skip.
     init : A string specifying (or a function defining) the initializer for
         the layers that adapt features along long skip connections.
-    weight_decay : The weight decay (L2 penalty) used in layers that adapt long
-        skip connections.
     ndim : The spatial dimensionality of the input and output (either 2 or 3).
     verbose : A boolean specifying whether to print messages about model   
         structure during construction (if True).
     """
-    
-    '''
-    Determine channel axis.
-    '''
-    channel_axis = get_channel_axis(ndim)
+    def __init__(self, in_channels, num_classes, blocks,
+                 long_skip=True, long_skip_merge_mode='concat',
+                 init='kaiming_normal', ndim=2, verbose=True):
+        super(fcn, self).__init__()
         
-    '''
-    Block list must be of odd length.
-    '''
-    if len(blocks)%2 != 1:
-        raise ValueError('blocks list must be of odd length')
-    
-    '''
-    `None` blocks are identity_block.
-    '''
-    blocks = list(blocks)
-    for i, block in enumerate(blocks):
-        if block is None:
-            blocks[i] = (identity_block, {})
+        # Block list must be of odd length.
+        if len(blocks)%2 != 1:
+            raise ValueError('blocks list must be of odd length')
         
-    '''
-    ndim must be only 2 or 3.
-    '''
-    if ndim not in [2, 3]:
-        raise ValueError("ndim must be either 2 or 3")
+        # ndim must be only 2 or 3.
+        if ndim not in [2, 3]:
+            raise ValueError("ndim must be either 2 or 3")
+        
+        # `None` blocks are identity_block.
+        blocks = list(blocks)
+        for i, block in enumerate(blocks):
+            if block is None:
+                blocks[i] = (identity_block, {})
+            
+        self.in_channels = in_channels
+        self.out_channels = None            # Computed later.
+        self.num_classes = num_classes
+        self.blocks = blocks
+        self.long_skip = long_skip
+        self.long_skip_merge_mode = long_skip_merge_mode
+        self.init = init
+        self.ndim = ndim
+        self.verbose = verbose
+        
+        # Function to print if verbose==True
+        def v_print(*args, **kwargs):
+            if verbose:
+                print(*args, **kwargs)
+            else:
+                return None
+        
+        '''
+        Instantiate blocks.
+        '''
+        self.blocks_instantiated = []
+        depth = len(blocks)//2
+        
+        # Encoder (downsampling)
+        last_out_channels = in_channels
+        for b in range(0, depth):
+            func, kwargs = blocks[b]
+            block = func(subsample=True if b>0 else False,
+                         in_channels=last_out_channels,
+                         **kwargs)
+            last_out_channels = block.out_channels
+            self.blocks_instantiated.append(block)
+            v_print("DOWN {} - {} : in_channels={}, out_channels={}"
+                    "".format(b, func,
+                              block.in_channels, block.out_channels))
+        
+        # Bottleneck
+        func, kwargs = blocks[depth]
+        block = func(subsample=True,
+                     upsample=True,
+                     in_channels=last_out_channels,
+                     **kwargs)
+        last_out_channels = block.out_channels
+        self.blocks_instantiated.append(block)
+        v_print("ACROSS {} - {} : in_channels={}, out_channels={}"
+                "".format(depth, func,
+                          block.in_channels, block.out_channels))
                 
-    '''
-    Function to print if verbose==True
-    '''
-    def v_print(*args, **kwargs):
-        if verbose:
-            print(*args, **kwargs)
-        else:
-            return None
-    
-    '''
-    Helper function to create a long skip connection with concatenation.
-    '''
-    def make_long_skip(prev_x, concat_x, name=None):
-        if long_skip_merge_mode == 'sum':
-            num_target_filters = concat_x._keras_shape[channel_axis]
-            if prev_x._keras_shape[channel_axis] != num_target_filters:
-                prev_x = Convolution(filters=num_target_filters,
-                                     kernel_size=1,
-                                     ndim=ndim,
-                                     kernel_initializer=init,
-                                     padding='valid',
-                                     kernel_regularizer=_l2(weight_decay),
-                                     name=_unique(name+'_prev'))(prev_x)
+        # Decoder (upsampling)
+        for b in range(0, depth):
+            if long_skip:
+                concat_block = self.blocks_instantiated[depth-b-1]
+                concat_channels = concat_block.out_channels
+                if long_skip_merge_mode=='concat':
+                    last_out_channels += concat_channels
+                elif long_skip_merge_mode=='sum':
+                    last_out_channels = concat_channels
+            func, kwargs = blocks[depth+b+1]
+            block = func(upsample=True,
+                         in_channels=last_out_channels,
+                         **kwargs)
+            last_out_channels = block.out_channels
+            self.blocks_instantiated.append(block)
+            v_print("UP {} - {} : in_channels={}, out_channels={}"
+                    "".format(b, func,
+                              block.in_channels, block.out_channels))
         
-        def _crop_to_fit(inputs):
-            """
-            Spatially crop a tensor's feature maps to the shape of the target
-            tensor. Target is thus expected to be smaller.
-            """
-            x, target = inputs
-            
-            # Compute slices for cropping.
-            indices = [slice(None, None)]*(ndim+2)
-            spatial_dims = set(range(ndim+2)).difference([0, channel_axis])
-            for dim in spatial_dims:
-                indices[dim] = slice(0, target.shape[dim])
-            
-            # Crop.
-            x = x[indices]
-            return x
-        
-        # Crop upward path to match long skip resolution, if needed.
-        cropped_shape = list(concat_x._keras_shape)
-        cropped_shape[channel_axis] = prev_x._keras_shape[channel_axis]
-        cropped_shape = cropped_shape[1:]
-        crop = Lambda(_crop_to_fit, output_shape=cropped_shape)
-        prev_x = crop([prev_x, concat_x])
-        
-        # Merge.
-        if long_skip_merge_mode=='sum':
-            merged = add([prev_x, concat_x])
-        elif long_skip_merge_mode == 'concat':
-            merged = concatenate([prev_x, concat_x], axis=channel_axis)
-        else:
-            raise ValueError("Unrecognized merge mode: {}"
-                             "".format(long_skip_merge_mode))
-        return merged
-    
-    '''
-    Build all the blocks on the contracting and expanding paths.
-    '''
-    tensors = {}
-    preprocessor_tensor = None
-    depth = len(blocks)//2
-    model_input = Input(shape=input_shape)
-    
-    # Preprocessor
-    x = model_input
-    if preprocessor is not None:
-        x = preprocessor(x)
-        preprocessor_tensor = x
-        v_print("PRE - shape: {}".format(x._keras_shape))
-    
-    # Encoder (downsampling)
-    for b in range(0, depth):
-        func, kwargs = blocks[b]
-        x = func(subsample=True, **kwargs)(x)
-        tensors[b] = x
-        v_print("BLOCK {} - shape: {}".format(b, x._keras_shape))
-        
-    # Bottleneck
-    func, kwargs = blocks[depth]
-    x = func(subsample=True, upsample=True, **kwargs)(x)
-    v_print("ACROSS {} - shape: {}".format(depth, x._keras_shape))
-    
-    # Decoder (upsampling)
-    for b in range(0, depth):
+        # Identify and set out_channels.
+        self.out_channels = block.out_channels
+                
+        '''
+        Helper function to create a long skip connection with concatenation.
+        '''
+        class merge_long_skip(torch.nn.Module):
+            def __init__(self, in_channels, concat_channels,
+                         long_skip_merge_mode):
+                super(merge_long_skip, self).__init__()
+                self.in_channels = in_channels
+                self.concat_channels = concat_channels
+                self.long_skip_merge_mode = long_skip_merge_mode
+                self.conv = None
+                if long_skip_merge_mode=='concat':
+                    self.out_channels = in_channels+concat_channels
+                elif long_skip_merge_mode=='sum':
+                    self.out_channels = concat_channels
+                    if in_channels != concat_channels:
+                        self.conv = convolution(in_channels=in_channels,
+                                                out_channels=concat_channels,
+                                                kernel_size=1,
+                                                ndim=ndim,
+                                                init=init,
+                                                padding=0)
+                else:
+                    raise ValueError("long_skip_merge_mode must be either "
+                                     "`concat` or `sum`, not `{}`"
+                                     "".format(long_skip_merge_mode))
+                
+            def forward(self, x, x_concat):
+                # Adjust number of channels to match x_concat.
+                if self.conv is not None:
+                    x = self.conv(x)
+                    
+                # Spatially crop a tensor's feature maps to the shape of the
+                # target tensor (x_concat). Target is thus expected to be
+                # smaller.
+                indices = [slice(None, None)]*(ndim+2)
+                spatial_dims = range(2, ndim+2)
+                for dim in spatial_dims:
+                    indices[dim] = slice(0, x_concat.size()[dim])
+                x = x[indices]
+                
+                # Merge.
+                merged = merge([x, x_concat], mode=self.long_skip_merge_mode)
+                
+                return merged
+              
+        '''
+        Set up long skips.
+        '''
+        long_skip_list = []
         if long_skip:
-            concat_x = tensors[depth-b-1]
-            n_filters = concat_x._keras_shape[channel_axis]
-            x = make_long_skip(prev_x=x,
-                               concat_x=concat_x,
-                               name=_unique('long_skip_{}'.format(depth-b-1)))
-        func, kwargs = blocks[depth+b+1]
-        x = func(upsample=True, **kwargs)(x)
-        v_print("UP {} - shape: {}".format(depth-b-1, x._keras_shape))
+            for i in range(len(self.blocks_instantiated)//2):
+                concat_block = self.blocks_instantiated[i]
+                block = self.blocks_instantiated[-i-2]
+                if (isinstance(concat_block, identity_block) and
+                    isinstance(block, identity_block)):
+                    # These blocks do nothing. Don't make a long skip.
+                    long_skip_list.append(None)
+                skip = merge_long_skip(\
+                                    in_channels=block.out_channels,
+                                    concat_channels=concat_block.out_channels,
+                                    long_skip_merge_mode=long_skip_merge_mode)
+                long_skip_list.append(skip)
+        self.long_skip_list = long_skip_list[::-1]   # reverse order
         
-    # Skip from preprocessor output to postprocessor input.
-    if long_skip and preprocessor_tensor is not None:
-        n_filters = preprocessor_tensor._keras_shape[channel_axis]
-        x = make_long_skip(prev_x=x,
-                           concat_x=preprocessor_tensor,
-                           name=_unique('long_skip_top'))
+        '''
+        Set up linear classifer.
+        '''
+        self.classifier = None
+        if num_classes is not None:
+            in_channels = self.blocks_instantiated[-1].out_channels
+            self.classifier = convolution(in_channels=in_channels,
+                                          out_channels=num_classes,
+                                          kernel_size=1,
+                                          ndim=ndim)
+    
+    def forward(self, input):
+        '''
+        Connect all the blocks on the contracting and expanding paths.
+        '''
+    
+        # Book keeping
+        tensors = {}
+        depth = len(self.blocks)//2
+    
+        # Encoder (downsampling)
+        x = input
+        for b in range(0, depth):
+            block = self.blocks_instantiated[b]
+            x = tensors[b] = block(x)
         
-    # Postprocessor
-    if postprocessor is not None:
-        x = postprocessor(x)
-        v_print("POST - shape: {}".format(x._keras_shape))
+        # Bottleneck
+        block = self.blocks_instantiated[depth]
+        x = block(x)
     
-    # OUTPUT (SOFTMAX)
-    if num_classes is not None:
-        # Linear classifier
-        output = Convolution(filters=num_classes,
-                             kernel_size=1,
-                             ndim=ndim,
-                             activation='linear',
-                             kernel_regularizer=_l2(weight_decay),
-                             name=_unique('classifier_conv'))(x)
-        if num_classes==1:
-            output = Activation('sigmoid', name=_unique('output'))(output)
-        else:
-            output = Activation(_softmax, name=_unique('output'))(output)
-    else:
-        # No classifier
-        output = x
+        # Decoder (upsampling)
+        for b in range(0, depth):
+            if self.long_skip and self.long_skip_list[b] is not None:
+                x_concat = tensors[depth-b-1]
+                x = self.long_skip_list[b](x, x_concat)
+            block = self.blocks_instantiated[depth+b+1]
+            x = block(x)
     
-    # MODEL
-    model = Model(inputs=model_input, outputs=output)
+        # Output
+        if self.classifier is not None:
+            x = self.classifier(x)
+            if self.num_classes==1:
+                x = F.sigmoid(x)
+            else:
+                # Softmax that works on ND inputs.
+                e = torch.exp(x - torch.max(x, dim=1, keepdim=True)[0])
+                s = torch.sum(e, dim=1, keepdim=True)
+                x = e / s
+        
+        return x
 
-    return model
 
-
-def assemble_resunet(input_shape, num_classes, num_init_blocks,
+def assemble_resunet(in_channels, num_classes, num_init_blocks,
                      num_main_blocks, main_block_depth, init_num_filters,
                      short_skip=True, long_skip=True,
                      long_skip_merge_mode='concat',
                      main_block=None, init_block=None, upsample_mode='repeat',
-                     dropout=0., normalization=BatchNormalization,
-                     norm_kwargs=None, weight_decay=None, init='he_normal',
-                     nonlinearity='relu', ndim=2, verbose=True):
+                     dropout=0., normalization=batch_normalization,
+                     norm_kwargs=None, init='kaiming_normal',
+                     nonlinearity='ReLU', ndim=2, verbose=True):
     """
-    input_shape : A tuple specifiying the image input shape.
+    in_channels : Number of channels in the input.
     num_classes : The number of classes in the segmentation output.
     num_init_blocks : The number of blocks of type init_block, above 
         main_blocks. These blocks always have the same number of channels as
@@ -269,9 +273,9 @@ def assemble_resunet(input_shape, num_classes, num_init_blocks,
         expanding path, as well as as one on the across path). Zero is not a
         valid depth.
     init_num_filters : The number of filters in the first and last
-        convolutions (preprocessor, postprocessor). Also the number of filters
-        in every init_block. Each main_block doubles (halves) the number of 
-        filters for each decrease (increase) in resolution.
+        convolutions. Also the number of filters in every init_block. Each
+        main_block doubles (halves) the number of  filters for each decrease
+        (increase) in resolution.
     short_skip : A boolean specifying whether to use ResNet-like shortcut
         connections from the input of each block to its output. The inputs are
         summed with the outputs.
@@ -280,7 +284,7 @@ def assemble_resunet(input_shape, num_classes, num_init_blocks,
         or sum features across.
     long_skip_merge_mode : Either or 'sum', 'concat' features across skip.
     main_block : A layer defining the main_block (bottleneck by default).
-    init_block : A layer defining the init_block (basic_block_mp by default).
+    init_block : A layer defining the init_block (tiny_block by default).
     upsample_mode : Either 'repeat' or 'conv'. With 'repeat', rows and colums
         are repeated as in nearest neighbour interpolation. With 'conv',
         upscaling is done via transposed convolution.
@@ -290,8 +294,6 @@ def assemble_resunet(input_shape, num_classes, num_init_blocks,
         normalization). If None, no normalization is applied.
     norm_kwargs : Keyword arguments to pass to batch norm layers. For batch
         normalization, default momentum is 0.9.
-    weight_decay : The weight decay (L2 penalty) used in every convolution 
-        (float).
     init : A string specifying (or a function defining) the initializer for
         layers.
     nonlinearity : A string (or function defining) the nonlinearity.
@@ -301,17 +303,12 @@ def assemble_resunet(input_shape, num_classes, num_init_blocks,
     """
     
     '''
-    Determine channel axis.
-    '''
-    channel_axis = get_channel_axis(ndim)
-    
-    '''
     By default, use depth 2 bottleneck for main_block
     '''
     if main_block is None:
         main_block = bottleneck
     if init_block is None:
-        init_block = basic_block_mp
+        init_block = tiny_block
     
     '''
     main_block_depth can be a list per block or a single value 
@@ -332,15 +329,13 @@ def assemble_resunet(input_shape, num_classes, num_init_blocks,
         raise ValueError("ndim must be either 2 or 3")
             
     '''
-    If BatchNormalization is used and norm_kwargs is not set, set default
+    If batch_normalization is used and norm_kwargs is not set, set default
     kwargs.
     '''
     if norm_kwargs is None:
-        if normalization == BatchNormalization:
-            norm_kwargs = {'momentum': 0.9,
-                           'scale': True,
-                           'center': True,
-                           'axis': channel_axis}
+        if normalization == batch_normalization:
+            norm_kwargs = {'momentum': 0.1,
+                           'affine': True}
         else:
             norm_kwargs = {}
             
@@ -349,7 +344,6 @@ def assemble_resunet(input_shape, num_classes, num_init_blocks,
     '''
     block_kwargs = {'skip': short_skip,
                     'dropout': dropout,
-                    'weight_decay': weight_decay,
                     'normalization': normalization,
                     'norm_kwargs': norm_kwargs,
                     'upsample_mode': upsample_mode,
@@ -358,101 +352,96 @@ def assemble_resunet(input_shape, num_classes, num_init_blocks,
                     'ndim': ndim}
     
     '''
-    Single convolution as preprocessor.
-    '''
-    preprocessor = Convolution(filters=init_num_filters,
-                               kernel_size=3,
-                               ndim=ndim,
-                               kernel_initializer=init,
-                               padding='same',
-                               kernel_regularizer=_l2(weight_decay))
-    
-    '''
-    Norm + nonlin + conv as postprocessor.
-    '''
-    def postprocessor(x):
-        out = normalization(**norm_kwargs)(x)
-        out = get_nonlinearity(nonlinearity)(out)
-        out = Convolution(filters=init_num_filters,
-                          kernel_size=3,
-                          ndim=ndim,
-                          kernel_initializer=init,
-                          padding='same',
-                          kernel_regularizer=_l2(weight_decay))(out)
-        return out
-    
-    '''
     Assemble all necessary blocks.
     '''
     blocks_down = []
     blocks_across = []
     blocks_up = []
     
+    # The first block is just a convolution.
+    # No normalization or nonlinearity on input.
+    kwargs = {'num_filters': init_num_filters,
+              'skip': False,
+              'normalization': None,
+              'nonlinearity': None,
+              'dropout': dropout,
+              'init': init,
+              'ndim': ndim}
+    blocks_down.append((tiny_block, kwargs))
+    
     # Down, init_block
     for i in range(num_init_blocks):
         kwargs = {'block_function': init_block,
-                  'filters': init_num_filters,
+                  'num_filters': init_num_filters,
                   'repetitions': 1}
         kwargs.update(block_kwargs)
-        blocks_down.append((residual_block, kwargs))
+        blocks_down.append((repeat_block, kwargs))
         
     # Down, main_block
     for i in range(num_main_blocks):
         kwargs = {'block_function': main_block,
-                  'filters': init_num_filters*(2**i),
+                  'num_filters': init_num_filters*(2**i),
                   'repetitions': main_block_depth[i]}
         kwargs.update(block_kwargs)
-        blocks_down.append((residual_block, kwargs))
+        blocks_down.append((repeat_block, kwargs))
         
     # Bottleneck, main_block
     kwargs = {'block_function': main_block,
-              'filters': init_num_filters*(2**num_main_blocks),
+              'num_filters': init_num_filters*(2**num_main_blocks),
               'repetitions': main_block_depth[num_main_blocks]}
     kwargs.update(block_kwargs)
-    blocks_across.append((residual_block, kwargs))
+    blocks_across.append((repeat_block, kwargs))
     
     # Up, main_block
     for i in range(num_main_blocks-1, -1, -1):
         kwargs = {'block_function': main_block,
-                  'filters': init_num_filters*(2**i),
+                  'num_filters': init_num_filters*(2**i),
                   'repetitions': main_block_depth[-i-1]}
         kwargs.update(block_kwargs)
-        blocks_up.append((residual_block, kwargs))
+        blocks_up.append((repeat_block, kwargs))
     
     # Up, init_block
     for i in range(num_init_blocks):
         kwargs = {'block_function': init_block,
-                  'filters': init_num_filters,
+                  'num_filters': init_num_filters,
                   'repetitions': 1}
         kwargs.update(block_kwargs)
-        blocks_up.append((residual_block, kwargs))
+        blocks_up.append((repeat_block, kwargs))
+        
+    # The last block is just a convolution.
+    # As requested, normalization and nonlinearity applied on input.
+    kwargs = {'num_filters': init_num_filters,
+              'skip': False,
+              'normalization': normalization,
+              'nonlinearity': nonlinearity,
+              'dropout': dropout,
+              'init': init,
+              'ndim': ndim}
+    blocks_up.append((tiny_block, kwargs))
         
     blocks = blocks_down + blocks_across + blocks_up
     
     '''
     Assemble model.
     '''
-    model = assemble_model(input_shape=input_shape,
-                           num_classes=num_classes,
-                           blocks=blocks,
-                           preprocessor=preprocessor,
-                           postprocessor=postprocessor,
-                           long_skip=long_skip,
-                           long_skip_merge_mode=long_skip_merge_mode,
-                           ndim=ndim,
-                           verbose=verbose)
+    model = fcn(in_channels=in_channels,
+                num_classes=num_classes,
+                blocks=blocks,
+                long_skip=long_skip,
+                long_skip_merge_mode=long_skip_merge_mode,
+                ndim=ndim,
+                verbose=verbose)
     return model
 
 
-
-def assemble_unet(input_shape, num_classes, init_num_filters=64,
+def assemble_unet(in_channels, num_classes, init_num_filters=64,
                   num_pooling=4, short_skip=False, long_skip=True,
                   long_skip_merge_mode='concat', upsample_mode='conv',
                   dropout=0., normalization=None, norm_kwargs=None,
-                  weight_decay=None, init='he_normal', nonlinearity='relu',
+                  init='kaiming_normal', nonlinearity='ReLU', 
                   halve_features_on_upsample=True, ndim=2, verbose=True):
     """
-    input_shape : A tuple specifiying the image input shape.
+    in_channels : Number of channels in the input.
     num_classes : The number of classes in the segmentation output.
     init_num_filters : The number of filters used in the convolutions of the
         first and lost blocks in the network. With every downsampling, the
@@ -476,12 +465,9 @@ def assemble_unet(input_shape, num_classes, init_num_filters=64,
     dropout : A float in [0, 1.] specifying the dropout probability in the 
         bottleneck and in the first subsequent block, as in the UNet.
     normalization : The normalization to apply to layers (none by default).
-        Recommended to pass keras's BatchNormalization when using 
-        short_skip==True.
+        Recommended to pass batch_normalization when using short_skip==True.
     norm_kwargs : Keyword arguments to pass to normalization layers. If using
-        BatchNormalization, kwargs are autoset with a momentum of 0.9.
-    weight_decay : The weight decay (L2 penalty) used in every convolution 
-        (float).
+        batch_normalization, kwargs are autoset with a momentum of 0.9.
     init : A string specifying (or a function defining) the initializer for
         layers.
     nonlinearity : The nonlinearity to use, passed as a string or a function.
@@ -494,26 +480,19 @@ def assemble_unet(input_shape, num_classes, init_num_filters=64,
     """
     
     '''
-    Determine channel axis.
-    '''
-    channel_axis = get_channel_axis(ndim)
-    
-    '''
     ndim must be only 2 or 3.
     '''
     if ndim not in [2, 3]:
         raise ValueError("ndim must be either 2 or 3")
             
     '''
-    If BatchNormalization is used and norm_kwargs is not set, set default
+    If batch_normalization is used and norm_kwargs is not set, set default
     kwargs.
     '''
     if norm_kwargs is None:
-        if normalization == BatchNormalization:
-            norm_kwargs = {'momentum': 0.9,
-                           'scale': True,
-                           'center': True,
-                           'axis': channel_axis}
+        if normalization == batch_normalization:
+            norm_kwargs = {'momentum': 0.1,
+                           'affine': True}
         else:
             norm_kwargs = {}
             
@@ -530,20 +509,13 @@ def assemble_unet(input_shape, num_classes, init_num_filters=64,
     Constant kwargs passed to the init and main blocks.
     '''
     block_kwargs = {'skip': short_skip,
-                   'weight_decay': weight_decay,
-                   'normalization': normalization,
-                   'norm_kwargs': norm_kwargs,
-                   'nonlinearity': nonlinearity,
-                   'upsample_mode': upsample_mode,
-                   'init': init,
-                   'ndim': ndim,
-                   'halve_features_on_upsample': halve_features_on_upsample}
-    
-    '''
-    Put first and last blocks as pre/post-processor to avoid sub/up-sampling.
-    '''
-    preprocessor = unet_block(filters=init_num_filters, **block_kwargs)
-    postprocessor = unet_block(filters=init_num_filters, **block_kwargs)
+                    'normalization': normalization,
+                    'norm_kwargs': norm_kwargs,
+                    'nonlinearity': nonlinearity,
+                    'upsample_mode': upsample_mode,
+                    'init': init,
+                    'ndim': ndim,
+                    'halve_features_on_upsample': halve_features_on_upsample}
     
     '''
     Assemble all necessary blocks.
@@ -551,16 +523,16 @@ def assemble_unet(input_shape, num_classes, init_num_filters=64,
     blocks_down = []
     blocks_across = []
     blocks_up = []
-    for i in range(1, num_pooling):
-        kwargs = {'filters': init_num_filters*(2**i)}
+    for i in range(0, num_pooling):
+        kwargs = {'num_filters': init_num_filters*(2**i)}
         kwargs.update(block_kwargs)
         blocks_down.append((unet_block, kwargs))
-    kwargs = {'filters': init_num_filters*(2**num_pooling),
+    kwargs = {'num_filters': init_num_filters*(2**num_pooling),
               'dropout': dropout}
     kwargs.update(block_kwargs)
     blocks_across.append((unet_block, kwargs))
-    for i in range(num_pooling-1, 0, -1):
-        kwargs = {'filters': init_num_filters*(2**i)}
+    for i in range(num_pooling-1, -1, -1):
+        kwargs = {'num_filters': init_num_filters*(2**i)}
         if i==num_pooling-1:
             kwargs['dropout'] = dropout
         kwargs.update(block_kwargs)
@@ -570,27 +542,24 @@ def assemble_unet(input_shape, num_classes, init_num_filters=64,
     '''
     Assemble model.
     '''
-    model = assemble_model(input_shape=input_shape,
-                           num_classes=num_classes,
-                           blocks=blocks,
-                           preprocessor=preprocessor,
-                           postprocessor=postprocessor,
-                           long_skip=long_skip,
-                           long_skip_merge_mode=long_skip_merge_mode,
-                           ndim=ndim,
-                           verbose=verbose)
+    model = fcn(in_channels=in_channels,
+                num_classes=num_classes,
+                blocks=blocks,
+                long_skip=long_skip,
+                long_skip_merge_mode=long_skip_merge_mode,
+                ndim=ndim,
+                verbose=verbose)
     return model
 
 
-def assemble_vnet(input_shape, num_classes, init_num_filters=32,
+def assemble_vnet(in_channels, num_classes, init_num_filters=32,
                   num_pooling=4, short_skip=True, long_skip=True,
                   long_skip_merge_mode='concat', upsample_mode='conv',
                   dropout=0., normalization=None, norm_kwargs=None,
-                  init=VarianceScaling(scale=3., mode='fan_avg'),
-                  weight_decay=None, nonlinearity='prelu', ndim=3,
+                  init='xavier_uniform', nonlinearity='PReLU', ndim=3,
                   verbose=True):
     """
-    input_shape : A tuple specifiying the image input shape.
+    in_channels : Number of channels in the input.
     num_classes : The number of classes in the segmentation output.
     init_num_filters : The number of filters in the first pair and last pair
         of convolutions in the network. With every downsampling, the number of
@@ -610,21 +579,14 @@ def assemble_vnet(input_shape, num_classes, init_num_filters=32,
     dropout : A float in [0, 1.], specifying dropout probability.
     normalization : The normalization to apply to layers (none by default).
     norm_kwargs : Keyword arguments to pass to normalization layers. If using
-        BatchNormalization, kwargs are autoset with a momentum of 0.9.
+        batch_normalization, kwargs are autoset with a momentum of 0.9.
     init : A string specifying (or a function defining) the initializer for
         layers.
-    weight_decay : The weight decay (L2 penalty) used in every convolution 
-        (float).
     nonlinearity : The nonlinearity to use, passed as a string or a function.
     ndim : The spatial dimensionality of the input and output (either 2 or 3).
     verbose : A boolean specifying whether to print messages about model   
         structure during construction (if True).
     """
-    
-    '''
-    Determine channel axis.
-    '''
-    channel_axis = get_channel_axis(ndim)
     
     '''
     ndim must be only 2 or 3.
@@ -633,15 +595,13 @@ def assemble_vnet(input_shape, num_classes, init_num_filters=32,
         raise ValueError("ndim must be either 2 or 3")
             
     '''
-    If BatchNormalization is used and norm_kwargs is not set, set default
+    If batch_normalization is used and norm_kwargs is not set, set default
     kwargs.
     '''
     if norm_kwargs is None:
-        if normalization == BatchNormalization:
-            norm_kwargs = {'momentum': 0.9,
-                           'scale': True,
-                           'center': True,
-                           'axis': channel_axis(ndim)}
+        if normalization == batch_normalization:
+            norm_kwargs = {'momentum': 0.1,
+                           'affine': True}
         else:
             norm_kwargs = {}
             
@@ -649,7 +609,6 @@ def assemble_vnet(input_shape, num_classes, init_num_filters=32,
     Constant kwargs passed to the init and main blocks.
     '''
     block_kwargs = {'skip': short_skip,
-                    'weight_decay': weight_decay,
                     'normalization': normalization,
                     'norm_kwargs': norm_kwargs,
                     'init': init,
@@ -659,34 +618,32 @@ def assemble_vnet(input_shape, num_classes, init_num_filters=32,
                     'ndim': ndim}
     
     '''
-    No sub/up-sampling at beginning, end.
-    '''
-    kwargs = {'num_conv': 1}
-    kwargs.update(block_kwargs)
-    preprocessor = vnet_block(filters=init_num_filters, **kwargs)
-    postprocessor = vnet_block(filters=init_num_filters, **kwargs)
-    
-    '''
     Assemble all necessary blocks.
     '''
     blocks_down = []
     blocks_across = []
     blocks_up = []
-    for i in range(1, num_pooling):
-        kwargs = {'filters': init_num_filters*(2**i)}
-        if i==1:
+    for i in range(0, num_pooling):
+        kwargs = {'num_filters': init_num_filters*(2**i)}
+        if i==0:
+            kwargs['num_conv'] = 1
+            kwargs['normalization'] = None
+            kwargs['nonlinearity'] = None
+        elif i==1:
             kwargs['num_conv'] = 2
         else:
             kwargs['num_conv'] = 3
         kwargs.update(block_kwargs)
         blocks_down.append((vnet_block, kwargs))
-    kwargs = {'filters': init_num_filters*(2**num_pooling),
+    kwargs = {'num_filters': init_num_filters*(2**num_pooling),
               'num_conv': 3}
     kwargs.update(block_kwargs)
     blocks_across.append((vnet_block, kwargs))
-    for i in range(num_pooling-1, 0, -1):
-        kwargs = {'filters': init_num_filters*(2**i)}
-        if i==1:
+    for i in range(num_pooling-1, -1, -1):
+        kwargs = {'num_filters': init_num_filters*(2**i)}
+        if i==0:
+            kwargs['num_conv'] = 1
+        elif i==1:
             kwargs['num_conv'] = 2
         else:
             kwargs['num_conv'] = 3
@@ -697,28 +654,26 @@ def assemble_vnet(input_shape, num_classes, init_num_filters=32,
     '''
     Assemble model.
     '''
-    model = assemble_model(input_shape=input_shape,
-                           num_classes=num_classes,
-                           blocks=blocks,
-                           preprocessor=preprocessor,
-                           postprocessor=postprocessor,
-                           long_skip=long_skip,
-                           long_skip_merge_mode=long_skip_merge_mode,
-                           ndim=ndim,
-                           verbose=verbose)
+    model = fcn(in_channels=in_channels,
+                num_classes=num_classes,
+                blocks=blocks,
+                long_skip=long_skip,
+                long_skip_merge_mode=long_skip_merge_mode,
+                ndim=ndim,
+                verbose=verbose)
     return model
 
 
-def assemble_fcdensenet(input_shape, num_classes,
+def assemble_fcdensenet(in_channels, num_classes,
                         block_depth=[4, 5, 7, 10, 12, 15, 12, 10, 7, 5, 4], 
                         num_blocks=11, init_num_filters=48, growth_rate=16,
                         long_skip=True, skip_merge_mode='concat', 
                         upsample_mode='conv', dropout=0.2,
-                        normalization=BatchNormalization, norm_kwargs=None,
-                        init='he_uniform', weight_decay=0.0001,
-                        nonlinearity='relu', ndim=2, verbose=True):
+                        normalization=batch_normalization, norm_kwargs=None,
+                        init='kaiming_uniform', nonlinearity='ReLU', ndim=2,
+                        verbose=True):
     """
-    input_shape : A tuple specifiying the image input shape.
+    in_channels : Number of channels in the input.
     num_classes : The number of classes in the segmentation output.
     block_depth : An integer or list of integers specifying the number of
         convolutions in each dense block. A list must contain num_blocks values
@@ -733,8 +688,7 @@ def assemble_fcdensenet(input_shape, num_classes,
     growth_rate : The linear rate with which the number of filters increases
         after each convolution, when using 'concat' skip_merge_mode.
         In 'sum' mode, this argument simply sets the number of filters for
-        every convolution layer except the first and last ones (preprocessor
-        and postprocessor).
+        every convolution layer except the first and last ones.
         If set to None, the number of filters for each dense_block will double
         after each pooling operation and halve after each upsampling operation.
     long_skip : A boolean specifying whether to use long skip connections
@@ -747,21 +701,14 @@ def assemble_fcdensenet(input_shape, num_classes,
     dropout : A float in [0, 1.], specifying dropout probability.
     normalization : The normalization to apply to layers (none by default).
     norm_kwargs : Keyword arguments to pass to normalization layers. If using
-        BatchNormalization, kwargs are autoset with a momentum of 0.9.
+        batch_normalization, kwargs are autoset with a momentum of 0.9.
     init : A string specifying (or a function defining) the initializer for
         layers.
-    weight_decay : The weight decay (L2 penalty) used in every convolution 
-        (float).
     nonlinearity : The nonlinearity to use, passed as a string or a function.
     ndim : The spatial dimensionality of the input and output (either 2 or 3).
     verbose : A boolean specifying whether to print messages about model   
         structure during construction (if True).
     """
-    
-    '''
-    Determine channel axis.
-    '''
-    channel_axis = get_channel_axis(ndim)
         
     '''
     Make sure num_blocks is odd.
@@ -787,15 +734,13 @@ def assemble_fcdensenet(input_shape, num_classes,
         raise ValueError("ndim must be either 2 or 3")
             
     '''
-    If BatchNormalization is used and norm_kwargs is not set, set default
+    If batch_normalization is used and norm_kwargs is not set, set default
     kwargs.
     '''
     if norm_kwargs is None:
-        if normalization == BatchNormalization:
-            norm_kwargs = {'momentum': 0.9,
-                           'scale': True,
-                           'center': True,
-                           'axis': channel_axis}
+        if normalization == batch_normalization:
+            norm_kwargs = {'momentum': 0.1,
+                           'affine': True}
         else:
             norm_kwargs = {}
             
@@ -803,7 +748,6 @@ def assemble_fcdensenet(input_shape, num_classes,
     Constant kwargs passed to the init and main blocks.
     '''
     block_kwargs = {'dropout': dropout,
-                    'weight_decay': weight_decay,
                     'normalization': normalization,
                     'norm_kwargs': norm_kwargs,
                     'upsample_mode': upsample_mode,
@@ -812,35 +756,7 @@ def assemble_fcdensenet(input_shape, num_classes,
                     'init': init,
                     'ndim': ndim}
     if growth_rate is not None:
-        block_kwargs['filters'] = growth_rate
-    
-    '''
-    Last block and single convolution as preprocessor (keep resolution).
-    '''
-    def preprocessor(x):
-        out = Convolution(filters=init_num_filters,
-                          kernel_size=3,
-                          ndim=ndim,
-                          kernel_initializer=init,
-                          padding='same',
-                          kernel_regularizer=_l2(weight_decay))(x)
-        kwargs = {'block_depth': block_depth[0],
-                  'merge_input': True}
-        kwargs.update(block_kwargs)
-        if growth_rate is None:
-            kwargs['filters'] = init_num_filters
-        out = dense_block(**kwargs)(out)
-        return out
-    
-    '''
-    First block as preprocessor (keep resolution).
-    '''
-    kwargs = {'block_depth': block_depth[-1],
-              'merge_input': False}
-    kwargs.update(block_kwargs)
-    if growth_rate is None:
-        kwargs['filters'] = init_num_filters
-    postprocessor = dense_block(**kwargs)
+        block_kwargs['num_filters'] = growth_rate
     
     '''
     Assemble all necessary blocks.
@@ -850,46 +766,85 @@ def assemble_fcdensenet(input_shape, num_classes,
     blocks_up = []
     n_blocks_side = num_blocks//2   # on one side
     
+    
+    # The first block is a convolution followed by a dense block.
+    class first_block(torch.nn.Module):
+        def __init__(self, in_channels, subsample=False, upsample=False):
+            super(first_block, self).__init__()
+            self.in_channels = in_channels
+            self.subsample = subsample
+            self.upsample = upsample
+            self.conv = convolution(in_channels=in_channels,
+                                    out_channels=init_num_filters,
+                                    kernel_size=3,
+                                    ndim=ndim,
+                                    init=init,
+                                    padding=1)
+            kwargs = {'in_channels': init_num_filters,
+                      'block_depth': block_depth[0],
+                      'merge_input': True}
+            kwargs.update(block_kwargs)
+            if growth_rate is None:
+                kwargs['filters'] = init_num_filters
+            self.block = dense_block(**kwargs)
+            self.out_channels = self.block.out_channels
+            
+        def forward(self, input):
+            out = self.conv(input)
+            out = self.block(out)
+            return out
+    blocks_down.append((first_block, {}))
+    
     # Down (Encoder)
     for i in range(1, n_blocks_side):
         kwargs = {'block_depth': block_depth[i],
                   'merge_input': True}
         if growth_rate is None:
-            kwargs['filters'] = init_num_filters*(2**i)
+            kwargs['num_filters'] = init_num_filters*(2**i)
         kwargs.update(block_kwargs)
         blocks_down.append((dense_block, kwargs))
-    
+        
     # NOTE: merge_input should be False for bottleneck and decoder.
     
     # Bottleneck, main_block
     kwargs = {'block_depth': block_depth[n_blocks_side],
               'merge_input': False}
     if growth_rate is None:
-        kwargs['filters'] = init_num_filters*(2**n_blocks_side)
+        kwargs['num_filters'] = init_num_filters*(2**n_blocks_side)
     kwargs.update(block_kwargs)
     blocks_across.append((dense_block, kwargs))
+    blocks = blocks_down + blocks_across
     
     # Up (Decoder)
     for i in range(n_blocks_side-1, 0, -1):
         kwargs = {'block_depth': block_depth[-i-1],
                   'merge_input': False}
         if growth_rate is None:
-            kwargs['filters'] = init_num_filters*(2**i)
+            kwargs['num_filters'] = init_num_filters*(2**i)
         kwargs.update(block_kwargs)
         blocks_up.append((dense_block, kwargs))
+        
+    # The last block is just a convolution.
+    # As requested, normalization and nonlinearity applied on input.
+    kwargs = {'num_filters': init_num_filters,
+              'skip': False,
+              'normalization': normalization,
+              'nonlinearity': nonlinearity,
+              'dropout': dropout,
+              'init': init,
+              'ndim': ndim}
+    blocks_up.append((tiny_block, kwargs))
         
     blocks = blocks_down + blocks_across + blocks_up
     
     '''
     Assemble model.
     '''
-    model = assemble_model(input_shape=input_shape,
-                           num_classes=num_classes,
-                           blocks=blocks,
-                           preprocessor=preprocessor,
-                           postprocessor=postprocessor,
-                           long_skip=long_skip,
-                           long_skip_merge_mode=skip_merge_mode,
-                           ndim=ndim,
-                           verbose=verbose)
+    model = fcn(in_channels=in_channels,
+                num_classes=num_classes,
+                blocks=blocks,
+                long_skip=long_skip,
+                long_skip_merge_mode=skip_merge_mode,
+                ndim=ndim,
+                verbose=verbose)
     return model

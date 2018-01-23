@@ -146,10 +146,10 @@ def merge(tensors, mode):
     
     
 """
-Return AlphaDropout if nonlinearity is 'selu', else Dropout.
+Return AlphaDropout if nonlinearity is 'SELU', else Dropout.
 """
 def get_dropout(dropout, nonlin=None):
-    if nonlin=='selu':
+    if nonlin=='SELU':
         return torch.nn.AlphaDropout(dropout)
     return torch.nn.Dropout(dropout)
 

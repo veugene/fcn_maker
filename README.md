@@ -20,12 +20,12 @@ def assemble_model(input_shape, num_classes, blocks, preprocessor=None, postproc
 
 The standard model shape follows the following 5 steps.
 1. Preprocessor
-2. Subsampling blocks
+2. Encoder blocks
 3. Bottleneck (across blocks)
-4. Upsampling blocks
+4. Decoder blocks
 5. Postprocessor
 
-Blocks in the encoder subsample their inputs. Blocks in the encoder upsample their outputs. The bottlenecks sits between them, in the center of the network. The input to the bottleneck is subsampled while the output from the bottleneck is upsampled. See [1] for an example description of this kind of network structure.
+Blocks in the encoder subsample their inputs. Blocks in the decoder upsample their outputs. The bottlenecks sits between them, in the center of the network. The input to the bottleneck is subsampled while the output from the bottleneck is upsampled. See [1] for an example description of this kind of network structure.
 
 #### Arguments ####
 
@@ -83,12 +83,13 @@ def custom_block(upsample, subsample, *args, **kwargs):
 
 ### Simple example ###
 
-The following defines a new U-Net style model with ResNet style bottleneck blocks, each with 32 filters. We will use 5 blocks in the encoder, 2 in the bottleneck, and 5 in the decoder. As described above, each block in the decoder performs subsampling of its inputs and each block in the encoder performs upsampling of its outputs.
+The following defines a new U-Net style model with ResNet style bottleneck blocks, each with 32 filters. We will use 5 blocks in the encoder, 2 in the bottleneck, and 5 in the decoder. As described above, each block in the encoder performs subsampling of its inputs and each block in the decoder performs upsampling of its outputs.
 
 This model could do 2D segmentation (but don't use it - there are much better models in the example section).
 
 ```python
 from keras.layers import Conv2D
+from keras.layers.normalization import BatchNormalization
 from fcn_maker.blocks import bottleneck, norm_nlin_conv
 from fcn_maker.model import assemble_model
 
@@ -173,7 +174,7 @@ This model was introduced in [1] to analyze the utility of short and long skip c
 * __upsample_mode__ : Either 'repeat' or 'conv'. With 'repeat', rows and colums are repeated as in nearest neighbour interpolation. With 'conv', upscaling is done via transposed convolution.
 * __dropout__ : A float [0, 1] specifying the dropout probability, introduced in every block.
 * __normalization__ : The normalization to apply to layers (by default: batch normalization). If None, no normalization is applied.
-* __norm_kwargs__ : Keyword arguments to pass to batch norm layers. For batch normalization, default momentum is 0.9. weight_decay : The weight decay (L2 penalty) used in every convolution (float).
+* __norm_kwargs__ : Keyword arguments to pass to batch norm layers. For batch normalization, default momentum is 0.9.
 * __weight_decay__ : The weight decay (L2 penalty) used in every convolution (float).
 * __init__ : A string specifying (or a function defining) the initializer for layers.
 * __nonlinearity__ : A string (or function defining) the nonlinearity.
@@ -218,7 +219,7 @@ There are two convolutions in a unet_block so a a list/tuple of two values can b
 * __upsample_mode__ : Either 'repeat' or 'conv'. With 'repeat', rows and colums are repeated as in nearest neighbour interpolation. With 'conv', upscaling is done via transposed convolution.
 * __dropout__ : A float [0, 1] specifying the dropout probability, introduced in every block.
 * __normalization__ : The normalization to apply to layers (none by default). Recommended to pass keras's BatchNormalization when using short_skip==True.
-* __norm_kwargs__ : Keyword arguments to pass to batch norm layers. For batch normalization, default momentum is 0.9. weight_decay : The weight decay (L2 penalty) used in every convolution (float).
+* __norm_kwargs__ : Keyword arguments to pass to batch norm layers. For batch normalization, default momentum is 0.9.
 * __weight_decay__ : The weight decay (L2 penalty) used in every convolution (float).
 * __init__ : A string specifying (or a function defining) the initializer for layers.
 * __nonlinearity__ : A string (or function defining) the nonlinearity.

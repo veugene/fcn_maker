@@ -524,6 +524,13 @@ def unet_block(filters, subsample=False, upsample=False, upsample_mode='conv',
             # user-settable option in this block, regardless of ndim.
             if halve_features_on_upsample:
                 filters_up = filters_2//2
+                if upsample_mode=='repeat':
+                    output = Convolution(filters=filters_up,
+                                         kernel_size=1,
+                                         ndim=ndim,
+                                         kernel_initializer=init,
+                                         kernel_regularizer=_l2(weight_decay),
+                                         name=name+"_upconv")(output)
             else:
                 filters_up = filters_2
             output = _upsample(output,

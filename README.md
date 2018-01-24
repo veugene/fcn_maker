@@ -2,111 +2,9 @@
 
 Build any FCN.
 
-This code provides a simple way to (re)create any encoder-decoder based fully convolutional network (FCN) for segmentation or keypoint detection. Simple recipes are provided for multiple published methods (see __Example Models__). These methods can be easily tweaked in a multitude of ways. The user can also create custom FCN networks in a simple way.
+This code provides a simple way to (re)create any encoder-decoder based fully convolutional network (FCN) for segmentation or keypoint detection. Simple recipes are provided for multiple published methods. These methods can be easily tweaked in many ways. The user can also create custom FCN networks.
 
 __Uses:__ pytorch
-
-## Build a Custom FCN ##
-
-An FCN can be built out of provided blocks or blocks written by the user. Existing blocks can be found in `fcn_maker.blocks`. These are assembled together by `fcn_maker.models.fcn` with the assumption that the desired architecture is an encoder-decoder network. Optionally, representations can be skipped along _long skip connections_ from the encoder (down path) to the decoder (up path).
-
-### The model module ###
-
-```python
-class fcn(in_channels, num_classes, blocks, long_skip=True, long_skip_merge_mode='concat', init='kaiming_normal', ndim=2, verbose=True)
-```
-
-The standard model shape follows the following 3 steps.
-1. Encoder blocks
-2. Bottleneck (across blocks)
-3. Decoder blocks
-
-Blocks in the encoder spatially subsample their inputs. Blocks in the decoder spatially upsample their outputs. Exceptions are the very first and very last blocks, which do not change the resolution of their input representations. The bottlenecks sits between the encoder and decoder, in the center of the network. The input to the bottleneck is subsampled while the output from the bottleneck is upsampled. See [1] for an example description of this kind of network structure.
-
-#### Arguments ####
-
-* __in_channels__ : Number of channels in the input.
-* __num_classes__ : The number of classes in the segmentation output. If None, no classifier will be assembled.
-* __blocks__ : A list of tuples, each containing a block function and a dictionary of keyword arguments to pass to it. The length must be odd-valued. The first set of blocks before the middle one is assumed to be on the downsampling (encoder) path; the second set after the middle one is assumed to be on the upsampling (decoder) path. The  first and last block do not change resolution. If instead of a tuple, a None is passed, the corresponding block will simply preserve its input, passing it onto the next block.
-* __long_skip__ : A boolean specifying whether to use long skip connections from the downward path to the upward path. These can either concatenate or sum features across.
-* __long_skip_merge_mode__ : Either or 'sum', 'concat' features across skip.
-* __init__ : A string specifying (or a function defining) the initializer for the layers that adapt features along long skip connections.
-* __ndim__ : The spatial dimensionality of the input and output (either 2 or 3).
-* __verbose__ : A boolean specifying whether to print messages about modelstructure during construction (if True).
-
-### Available blocks ###
-
-* __bottleneck__ (with residual_block)
-* __basic_block__ (with residual_block)
-* __tiny_block__ (with residual_block)
-* __unet_block__
-* __vnet_block__
-* __dense_block__
-
-### Custom blocks ###
-
-A custom block inherits from `fcn_maker.blocks.block_abstract` (itself a torch module). This base class defines the expected arguments and attributes of a block class. Expected arguments and attributes are:
-* __in_channels__ : The number of channels in the input.
-* __num_filters__ : The number of filters to apply to input data.
-* __subsample__ : Whether to do spatial subsampling (x2 in each dimension).
-* __upsample__ : Whether to do spatial upsampling (x2 in each dimension).
-
-Note that there is no `out_channels` argument -- the block is expected to determine this value and set it as an object attribute during initialization. This allows the number of channels in the output to be dependent on any number of arguments.
-
-As in any torch module, the `forward` method must be defined.
-
-The expected block structure is to do subsampling at the input of the block and do upsampling at the output of the block.
-
-This example code illustrates the expected pattern (given some arbitrary modules `upsample_operation` and `subsample_operation`):
-
-```python
-class custom_block(fcn_maker.blocks.block_abstract):
-    def __init__(self, in_channels, num_filters, subsample, upsample):
-        super(custom_block, self).__init__()
-        self.op = []
-        if upsample:
-            self.op.append(upsample_operation)  
-        
-        # Add more operations
-        # ...
-        # ...
-        
-        if subsample:
-            self.op.append(subsample_operation)
-    
-    def forward(self, input):
-        out = input
-        for op in self.op:
-            out = op(out)
-        return out
-```
-
-### Simple example ###
-
-The following defines a new U-Net style model with ResNet style bottleneck blocks, each with 32 filters. We will use 5 blocks in the encoder, 2 in the bottleneck, and 5 in the decoder. As described above, each block in the encoder (except the first) performs subsampling of its inputs and each block in the decoder (except the first) performs upsampling of its outputs.
-
-This model could do 2D segmentation (but don't use it - there are much better models in the example section).
-
-```python
-from torch.nn import Conv2d
-from fcn_maker.blocks import bottleneck, norm_nlin_conv, batch_normalization
-from fcn_maker.model import fcn
-
-block_kwargs = block_kwargs = {'num_filters': 32,
-                               'skip': True,
-                               'normalization': batch_normalization,
-                               'nonlinearity': 'ReLU',
-                               'ndim': 2}
-blocks = [(bottleneck, block_kwargs)] * (5+1+5)
-model = fcn(in_channels=(3, None, None), num_classes=10,
-                       blocks=blocks, long_skip=True, ndim=2)
-```
-
-### Symmetry breaking ###
-
-Some symmetry is assumed by `fcn` in that the `blocks` list is expected to have an odd number of blocks, with blocks paired across either side of the middle entry. The middle entry is the bottleneck block. The set of blocks before the middle one is on the subsampling (encoder) path. The set after the middle one is on the upsampling (decoder) path.
-
-Blocks are paired across encoder and decoder in order to synchronize subsampling and upsampling operations and to bridge the encoder and decoder with long skip connections at those points. However, the network does not have to be symmetric since different types of blocks of any depth could be used in the encoder and decoder. If desired, any block could be skipped by passing None instead of the `(block, kwargs)` tuple in the list. This still allows for subsampling and upsampling, as needed, without performing any other processing (the `identity_block` is used by default).
 
 ## Example Models ##
 
@@ -189,10 +87,15 @@ assemble_resunet(in_channels=1,
                  init_num_filters=32)
 ```
 
-When constructing a ResUNet, the input and the pre-classifier output are always each processed by a convolution layer. The construction in `assemble_resunet` assumes that there are two categories of blocks: `init_block` and `main_block`. The `init_block` blocks are found at the beginning and end of the network (just after the initial convolution and just before the final convolution). They preserve the number of filters while reducing feature resolution at the encoder path (down path) and increasing feature resolution at the decoder path (up path). All other blocks are of the `main_block` category; these double the number of features with each subsampling and halve the number of features with each upsampling. In the paper, the blocks are set thus:  
+In a ResUNet, the first and last operations (before the classifier) are always convolutions. All blocks are arranged between the first and last convolution. The model constructor, `assemble_resunet`, expects two categories of blocks: `init_block` and `main_block`.
+
+`init_block` : blocks at the beginning and end of the network. These always output representations with `init_num_filters` channels.
+
+`main_block` : all blocks in between. These double the number of features with each subsample operation and halve the number of features with each upsample operation.
+
+In the paper, the blocks are set thus:  
 `init_block` : `fcn_maker.blocks.tiny_block`  
 `main_block` : `fcn_maker.blocks.bottleneck`
-
 
 ### UNet ###
 
@@ -316,6 +219,118 @@ model = assemble_fcdensenet(in_channels=1, num_classes=11,
                             skip_merge_mode='sum', growth_rate=None)
 ```
 
+## Build a Custom FCN ##
+
+An FCN can be built from a list of blocks (modules). Blocks can be found in `fcn_maker.blocks` or written by the user. These are assembled together by `fcn_maker.models.fcn` with the assumption that the desired architecture is an encoder-decoder network. Optionally, representations can be skipped along _long skip connections_ from the encoder (down path) to the decoder (up path). See [1] for details.
+
+### The model module ###
+
+```python
+class fcn(in_channels, num_classes, blocks, long_skip=True, long_skip_merge_mode='concat', init='kaiming_normal', ndim=2, verbose=True)
+```
+
+The standard model structure is composed of the following sets of blocks:
+1. Encoder blocks
+2. Bottleneck (across blocks)
+3. Decoder blocks
+
+__(1)__ Blocks in the encoder spatially subsample their inputs (as in a CNN).  
+__(2)__ A single block that spatially subsamples its input and spatially upsamples its output.  
+__(3)__ Blocks in the decoder spatially upsample their outputs (inverse of a CNN).
+
+Note: the very first block and the very last block do not change spatial resolution.
+
+The `fcn` class assumes that there are an equal number of blocks in the encoder and decoder paths. Further, it assumes that blocks are paired across the two paths. For an FCN with 11 blocks, blocks in the block list are paired thus (matching numbers form pairs):
+
+```
+(   encoder   )     (   decoder   )
+(1, 2, 3, 4, 5) (6) (5, 4, 3, 2, 1)
+           ( bottleneck )
+```
+
+For each pair, a _long skip connection_ is (optionally) created from the encoder to the decoder.
+
+All blocks are provided to `fcn` in a single list, in feedforward order, input to output (as listed above). The `fcn` class takes care of initializing the blocks. Thus, each block in the block list is specified as a `(block, kwargs)` tuple, with all keyward arguments included in `kwargs`.  The class automatically specifies which blocks change resolution.
+
+Although blocks are paired, the model does not have to be symmetric. The two blocks in a pair can be completely different; any block could also be effectively skipped by replacing it with a placeholder. This is done by specifying `None` instead of a `(block, kwargs)` tuple in the block list.
+
+A `None` is internally replaced by `identity_block` which does nothing (beyond a possible automatic change in spatial resolution, as needed). A long skip connection is not created for any pair with such a placeholder block.
+
+#### Arguments ####
+
+* __in_channels__ : Number of channels in the input.
+* __num_classes__ : The number of classes in the segmentation output. If None, no classifier will be assembled.
+* __blocks__ : A list of tuples, each containing a block function and a dictionary of keyword arguments to pass to it. The length must be odd-valued. The first set of blocks before the middle one is assumed to be on the downsampling (encoder) path; the second set after the middle one is assumed to be on the upsampling (decoder) path. The  first and last block do not change resolution. If instead of a tuple, a None is passed, the corresponding block will simply preserve its input, passing it onto the next block.
+* __long_skip__ : A boolean specifying whether to use long skip connections from the downward path to the upward path. These can either concatenate or sum features across.
+* __long_skip_merge_mode__ : Either or 'sum', 'concat' features across skip.
+* __init__ : A string specifying (or a function defining) the initializer for the layers that adapt features along long skip connections.
+* __ndim__ : The spatial dimensionality of the input and output (either 2 or 3).
+* __verbose__ : A boolean specifying whether to print messages about modelstructure during construction (if True).
+
+### Available blocks ###
+
+* __bottleneck__ (with residual_block)
+* __basic_block__ (with residual_block)
+* __tiny_block__ (with residual_block)
+* __unet_block__
+* __vnet_block__
+* __dense_block__
+
+### Simple example: custom model ###
+
+The following defines a new U-Net style model with ResNet style "basic" blocks, each with 32 filters but using an ELU nonlinearity instead of ReLU. We will use 5 blocks in the encoder, 1 in the bottleneck, and 5 in the decoder.
+
+```python
+from torch.nn import Conv2d
+from fcn_maker.blocks import basic_block
+from fcn_maker.model import fcn
+
+block_kwargs = {'num_filters': 32,
+                'nonlinearity': 'ELU'}
+block_list = [(basic_block, block_kwargs)] * (5+1+5)
+model = fcn(in_channels=(3, None, None), num_classes=10,
+            blocks=block_list, long_skip=True, ndim=2)
+```
+
+Arguments to change spatial resolution (`subsample` and `upsample`) are not included in `block_kwargs`. This is because the model will handle this automatically, as described above.
+
+### Custom blocks ###
+
+A custom block inherits from `fcn_maker.blocks.block_abstract` (itself a torch module). This base class defines the expected arguments and attributes of a block class. Expected arguments and attributes are:
+* __in_channels__ : The number of channels in the input.
+* __num_filters__ : The number of filters to apply to input data.
+* __subsample__ : Whether to do spatial subsampling (x2 in each dimension).
+* __upsample__ : Whether to do spatial upsampling (x2 in each dimension).
+
+Note that there is no `out_channels` argument -- the block is expected to determine this value and set it as an object attribute during initialization. This allows the number of channels in the output to be dependent on any number of arguments.
+
+As in any torch module, the `forward` method must be defined.
+
+The expected block structure is to optionally do subsampling at the input of the block and optionally do upsampling at the output of the block.
+
+This example code illustrates the expected pattern (given some arbitrary modules `upsample_operation` and `subsample_operation`):
+
+```python
+class custom_block(fcn_maker.blocks.block_abstract):
+    def __init__(self, in_channels, num_filters, subsample, upsample):
+        super(custom_block, self).__init__()
+        self.op = []
+        if subsample:
+            self.op.append(subsample_operation)  
+        
+        # Add more operations
+        # ...
+        # ...
+        
+        if upsample:
+            self.op.append(upsample_operation)
+    
+    def forward(self, input):
+        out = input
+        for op in self.op:
+            out = op(out)
+        return out
+```
 
 ## Example Task: ISBI EM segmentation ##
 

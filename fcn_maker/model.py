@@ -95,6 +95,7 @@ class fcn(torch.nn.Module):
                          **kwargs)
             last_out_channels = block.out_channels
             self.blocks_instantiated.append(block)
+            self._modules['down_{}'.format(b)] = block
             v_print("DOWN {} - {} : in_channels={}, out_channels={}"
                     "".format(b, func,
                               block.in_channels, block.out_channels))
@@ -107,6 +108,7 @@ class fcn(torch.nn.Module):
                      **kwargs)
         last_out_channels = block.out_channels
         self.blocks_instantiated.append(block)
+        self._modules['across'] = block
         v_print("ACROSS {} - {} : in_channels={}, out_channels={}"
                 "".format(depth, func,
                           block.in_channels, block.out_channels))
@@ -114,18 +116,19 @@ class fcn(torch.nn.Module):
         # Decoder (upsampling)
         for b in range(0, depth):
             if long_skip:
-                concat_block = self.blocks_instantiated[depth-b-1]
+                concat_block = self._modules['down_{}'.format(depth-b-1)]
                 concat_channels = concat_block.out_channels
                 if long_skip_merge_mode=='concat':
                     last_out_channels += concat_channels
                 elif long_skip_merge_mode=='sum':
                     last_out_channels = concat_channels
             func, kwargs = blocks[depth+b+1]
-            block = func(upsample=True,
+            block = func(upsample=True if b<depth-1 else False,
                          in_channels=last_out_channels,
                          **kwargs)
             last_out_channels = block.out_channels
             self.blocks_instantiated.append(block)
+            self._modules['up_{}'.format(depth-b-1)] = block
             v_print("UP {} - {} : in_channels={}, out_channels={}"
                     "".format(b, func,
                               block.in_channels, block.out_channels))
@@ -196,6 +199,7 @@ class fcn(torch.nn.Module):
                                     concat_channels=concat_block.out_channels,
                                     long_skip_merge_mode=long_skip_merge_mode)
                 long_skip_list.append(skip)
+                self._modules['long_skip_{}'.format(i)] = skip
         self.long_skip_list = long_skip_list[::-1]   # reverse order
         
         '''
@@ -203,11 +207,12 @@ class fcn(torch.nn.Module):
         '''
         self.classifier = None
         if num_classes is not None:
-            in_channels = self.blocks_instantiated[-1].out_channels
+            in_channels = self._modules['up_0'].out_channels
             self.classifier = convolution(in_channels=in_channels,
                                           out_channels=num_classes,
                                           kernel_size=1,
                                           ndim=ndim)
+            self._modules['classifier'] = self.classifier
     
     def forward(self, input):
         '''

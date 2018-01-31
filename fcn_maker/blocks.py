@@ -224,32 +224,31 @@ class norm_nlin_conv(torch.nn.Module):
         self.norm_kwargs = norm_kwargs
         self.init = init
         self.ndim =ndim
-        self.op = []
         if normalization is not None:
-            self.op += [normalization(ndim=ndim,
-                                      num_features=in_channels,
-                                      **norm_kwargs)]
-        self.op += [get_nonlinearity(nonlinearity)]
+            self._modules['norm'] = normalization(ndim=ndim,
+                                                  num_features=in_channels,
+                                                  **norm_kwargs)
+        self._modules['nlin'] = get_nonlinearity(nonlinearity)
+        if upsample:
+            self._modules['upsample'] = do_upsample(mode=upsample_mode,
+                                                    ndim=ndim,
+                                                    in_channels=in_channels,
+                                                    out_channels=in_channels,
+                                                    kernel_size=2)
         stride = 1
         if subsample:
             stride = 2
-        if upsample:
-            self.op += [do_upsample(mode=upsample_mode,
-                                    ndim=ndim,
-                                    in_channels=in_channels,
-                                    out_channels=in_channels,
-                                    kernel_size=2)]
-        self.op += [convolution(in_channels=in_channels,
-                                out_channels=out_channels,
-                                kernel_size=kernel_size,
-                                ndim=ndim,
-                                stride=stride,
-                                init=init,
-                                padding=kernel_size//2)]
+        self._modules['conv'] = convolution(in_channels=in_channels,
+                                            out_channels=out_channels,
+                                            kernel_size=kernel_size,
+                                            ndim=ndim,
+                                            stride=stride,
+                                            init=init,
+                                            padding=kernel_size//2)
         
     def forward(self, input):
         out = input
-        for op in self.op:
+        for op in self._modules.values():
             out = op(out)
         return out
 
@@ -268,34 +267,33 @@ class shortcut(torch.nn.Module):
         self.upsample_mode = upsample_mode
         self.init = init
         self.ndim = ndim
-        self.op = []
         
         # Downsample input
         if subsample:
-            self.op += [do_subsample(ndim=ndim)]
+            self._modules['subsample'] = do_subsample(ndim=ndim)
             
         # Upsample input
         if upsample:
-            self.op += [do_upsample(mode=upsample_mode,
-                                    ndim=ndim,
-                                    in_channels=in_channels,
-                                    out_channels=in_channels,
-                                    kernel_size=2,
-                                    init=init)]
+            self._modules['upsample'] = do_upsample(mode=upsample_mode,
+                                                    ndim=ndim,
+                                                    in_channels=in_channels,
+                                                    out_channels=in_channels,
+                                                    kernel_size=2,
+                                                    init=init)
         
         # Expand channels of shortcut to match residual.
         # Stride appropriately to match residual (width, height)
         # Should be int if network architecture is correctly configured.
         if in_channels != out_channels:
-            self.op += [convolution(in_channels=in_channels,
-                                    out_channels=out_channels,
-                                    kernel_size=1,
-                                    ndim=ndim,
-                                    init=init)]
+            self._modules['conv'] = convolution(in_channels=in_channels,
+                                                out_channels=out_channels,
+                                                kernel_size=1,
+                                                ndim=ndim,
+                                                init=init)
     
     def forward(self, input, residual):
         shortcut = input
-        for op in self.op:
+        for op in self._modules.values():
             shortcut = op(shortcut)
         return residual+shortcut
         
@@ -316,6 +314,18 @@ class block_abstract(torch.nn.Module):
         
     def forward(self, input):
         raise NotImplemented()
+        
+    def _register_modules(self, modules):
+        if isinstance(modules, dict):
+            self._modules.update(modules)
+        else:
+            if not hasattr(modules, '__len__'):
+                modules = [modules]
+            i = 0
+            for m in modules:
+                while 'layer_{}'.format(i) in self._modules:
+                    i += 1
+                self._modules['layer_{}'.format(i)] = m
         
     def get_out_channels(self):
         if not hasattr(self, 'out_channels'):
@@ -350,6 +360,8 @@ class identity_block(block_abstract):
                                  out_channels=num_filters,
                                  kernel_size=2,
                                  init=init)]
+                                 
+        self._register_modules(self.op)
         
     def forward(self, input):
         out = input
@@ -412,6 +424,7 @@ class bottleneck(block_abstract):
                                    ndim=ndim)]        
         if dropout > 0:
             self.op += [get_dropout(dropout, nonlinearity)]
+        self._register_modules(self.op)
         self.op_shortcut = None
         if skip:
             self.op_shortcut = shortcut(in_channels=in_channels,
@@ -421,6 +434,7 @@ class bottleneck(block_abstract):
                                         upsample_mode=upsample_mode,
                                         init=init,
                                         ndim=ndim)
+            self._register_modules({'shortcut': self.op_shortcut})
             
     def forward(self, input):
         out = input
@@ -476,6 +490,7 @@ class basic_block(block_abstract):
                                    init=init,
                                    nonlinearity=nonlinearity,
                                    ndim=ndim)]
+        self._register_modules(self.op)
         self.op_shortcut = None
         if skip:
             self.op_shortcut = shortcut(in_channels=in_channels,
@@ -485,6 +500,7 @@ class basic_block(block_abstract):
                                         upsample_mode=upsample_mode,
                                         init=init,
                                         ndim=ndim)
+            self._register_modules({'shortcut': self.op_shortcut})
                                      
     def forward(self, input):
         out = input
@@ -539,6 +555,7 @@ class tiny_block(block_abstract):
                                     out_channels=num_filters,
                                     kernel_size=2,
                                     init=init)]
+        self._register_modules(self.op)
         self.op_shortcut = None
         if skip:
             self.op_shortcut = shortcut(in_channels=in_channels,
@@ -548,6 +565,7 @@ class tiny_block(block_abstract):
                                         upsample_mode=upsample_mode,
                                         init=init,
                                         ndim=ndim)
+            self._register_modules({'shortcut': self.op_shortcut})
 
     def forward(self, input):
         out = input
@@ -604,6 +622,7 @@ class repeat_block(block_abstract):
             last_out_channels = block.get_out_channels()
             self.blocks.append(block)
         self.out_channels = block.out_channels
+        self._register_modules(self.blocks)
         
     def forward(self, input):
         out = input
@@ -691,6 +710,7 @@ class unet_block(block_abstract):
             self.op += [get_nonlinearity(nonlinearity)]
             out_channels = out_channels_up
         self.out_channels = out_channels
+        self._register_modules(self.op)
         self.op_shortcut = None
         if skip:
             self.op_shortcut = shortcut(in_channels=in_channels,
@@ -700,6 +720,7 @@ class unet_block(block_abstract):
                                         upsample_mode=upsample_mode,
                                         init=init,
                                         ndim=ndim)
+            self._register_modules({'shortcut': self.op_shortcut})
 
     def forward(self, input):
         out = input
@@ -754,6 +775,7 @@ class vnet_block(block_abstract):
         
             if dropout > 0:
                 self.op += [get_dropout(dropout, nonlinearity)]
+        self._register_modules(self.op)
         self.op_shortcut = None
         if skip:
             self.op_shortcut = shortcut(in_channels=in_channels,
@@ -763,6 +785,7 @@ class vnet_block(block_abstract):
                                         upsample_mode=upsample_mode,
                                         init=init,
                                         ndim=ndim)
+            self._register_modules({'shortcut': self.op_shortcut})
         self.op_upsample = []
         out_channels = num_filters
         if upsample:
@@ -780,6 +803,7 @@ class vnet_block(block_abstract):
                                              init=init)]
             self.op_upsample += [get_nonlinearity(nonlinearity)]
             out_channels = num_filters//2
+            self._register_modules(self.op_upsample)
         self.out_channels = out_channels
 
     def forward(self, input):
@@ -881,6 +905,8 @@ class dense_block(block_abstract):
                                              out_channels=out_channels,
                                              kernel_size=3,
                                              init=init)]
+                                             
+        self._register_modules(self.op+self.op_upsample)
     
     def forward(self, input):
         # Prepare input.

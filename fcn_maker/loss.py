@@ -29,21 +29,22 @@ class dice_loss(torch.nn.Module):
         self.smooth = 1
             
     def forward(self, y_pred, y_true):
+        # Targer variable must not require a gradient.
+        assert(not y_true.requires_grad)
+    
         # If needed, change ground truth from categorical to integer format.
         if y_true.ndimension() > y_pred.ndimension():
-            y_true = torch.max(y_true, axis=1)[1]   # argmax
+            y_true = torch.max(y_true, dim=1)[1]   # argmax
             
         # Flatten all inputs.
         y_true_f = y_true.view(-1).int()
         y_pred_f = y_pred.view(-1)
         
         # Aggregate target classes, mask out classes in mask_class.
-        y_target = torch.sum([torch.equal(y_true_f, t) for t in target_class],
-                              axis=0)
-        if mask_class is not None:
-            mask_out = torch.sum([K.equal(y_true_f, t) for t in mask_class],
-                                  axis=0)
-            idxs = torch.equal(mask_out, 0).nonzero()
+        y_target = sum([y_true_f==t for t in self.target_class]).float()
+        if self.mask_class is not None:
+            mask_out = sum([y_true_f==t for t in self.mask_class])
+            idxs = (mask_out==0).nonzero()
             y_target = y_target[idxs]
             y_pred_f = y_pred_f[idxs]
         

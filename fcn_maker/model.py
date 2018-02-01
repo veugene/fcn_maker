@@ -8,6 +8,7 @@ from .blocks import (convolution,
                      batch_normalization,
                      get_nonlinearity,
                      merge,
+                     crop_stack,
                      bottleneck,
                      basic_block,
                      tiny_block,
@@ -35,6 +36,9 @@ class fcn(torch.nn.Module):
         from the downward path to the upward path. These can either concatenate
         or sum features across.
     long_skip_merge_mode : Either or 'sum', 'concat' features across skip.
+    conv_padding : Whether to use zero-padding for convolutions. If True, the
+        output size is the same as the input size; if False, the output is
+        smaller than the input size.
     init : A string specifying (or a function defining) the initializer for
         the layers that adapt features along long skip connections.
     ndim : The spatial dimensionality of the input and output (either 2 or 3).
@@ -43,7 +47,8 @@ class fcn(torch.nn.Module):
     """
     def __init__(self, in_channels, num_classes, blocks,
                  long_skip=True, long_skip_merge_mode='concat',
-                 init='kaiming_normal', ndim=2, verbose=True):
+                 conv_padding=True, init='kaiming_normal', ndim=2,
+                 verbose=True):
         super(fcn, self).__init__()
         
         # Block list must be of odd length.
@@ -69,6 +74,7 @@ class fcn(torch.nn.Module):
         self.blocks = blocks
         self.long_skip = long_skip
         self.long_skip_merge_mode = long_skip_merge_mode
+        self.conv_padding = conv_padding
         self.init = init
         self.ndim = ndim
         self.verbose = verbose
@@ -168,14 +174,9 @@ class fcn(torch.nn.Module):
                 if self.conv is not None:
                     x = self.conv(x)
                     
-                # Spatially crop a tensor's feature maps to the shape of the
-                # target tensor (x_concat). Target is thus expected to be
-                # smaller.
-                indices = [slice(None, None)]*(ndim+2)
-                spatial_dims = range(2, ndim+2)
-                for dim in spatial_dims:
-                    indices[dim] = slice(0, x_concat.size()[dim])
-                x = x[indices]
+                # Spatially crop the tensors to the smallest dimensions 
+                # between them. Center tensors before cropping.
+                x, x_concat = crop_stack([x, x_concat])
                 
                 # Merge.
                 merged = merge([x, x_concat], mode=self.long_skip_merge_mode)
@@ -261,8 +262,9 @@ def assemble_resunet(in_channels, num_classes, num_init_blocks,
                      long_skip_merge_mode='concat',
                      main_block=None, init_block=None, upsample_mode='repeat',
                      dropout=0., normalization=batch_normalization,
-                     norm_kwargs=None, init='kaiming_normal',
-                     nonlinearity='ReLU', ndim=2, verbose=True):
+                     norm_kwargs=None, conv_padding=True,
+                     init='kaiming_normal', nonlinearity='ReLU', ndim=2,
+                     verbose=True):
     """
     in_channels : Number of channels in the input.
     num_classes : The number of classes in the segmentation output.
@@ -302,6 +304,9 @@ def assemble_resunet(in_channels, num_classes, num_init_blocks,
         normalization). If None, no normalization is applied.
     norm_kwargs : Keyword arguments to pass to batch norm layers. For batch
         normalization, default momentum is 0.9.
+    conv_padding : Whether to use zero-padding for convolutions. If True, the
+        output size is the same as the input size; if False, the output is
+        smaller than the input size.
     init : A string specifying (or a function defining) the initializer for
         layers.
     nonlinearity : A string (or function defining) the nonlinearity.
@@ -356,6 +361,7 @@ def assemble_resunet(in_channels, num_classes, num_init_blocks,
                     'norm_kwargs': norm_kwargs,
                     'upsample_mode': upsample_mode,
                     'nonlinearity': nonlinearity,
+                    'conv_padding': conv_padding,
                     'init': init,
                     'ndim': ndim}
     
@@ -373,6 +379,7 @@ def assemble_resunet(in_channels, num_classes, num_init_blocks,
               'normalization': None,
               'nonlinearity': None,
               'dropout': dropout,
+              'conv_padding': conv_padding,
               'init': init,
               'ndim': ndim}
     blocks_down.append((tiny_block, kwargs))
@@ -423,6 +430,7 @@ def assemble_resunet(in_channels, num_classes, num_init_blocks,
               'normalization': normalization,
               'nonlinearity': nonlinearity,
               'dropout': dropout,
+              'conv_padding': conv_padding,
               'init': init,
               'ndim': ndim}
     blocks_up.append((tiny_block, kwargs))
@@ -437,6 +445,7 @@ def assemble_resunet(in_channels, num_classes, num_init_blocks,
                 blocks=blocks,
                 long_skip=long_skip,
                 long_skip_merge_mode=long_skip_merge_mode,
+                conv_padding=conv_padding,
                 ndim=ndim,
                 verbose=verbose)
     return model
@@ -446,8 +455,9 @@ def assemble_unet(in_channels, num_classes, init_num_filters=64,
                   num_pooling=4, short_skip=False, long_skip=True,
                   long_skip_merge_mode='concat', upsample_mode='conv',
                   dropout=0., normalization=None, norm_kwargs=None,
-                  init='kaiming_normal', nonlinearity='ReLU', 
-                  halve_features_on_upsample=True, ndim=2, verbose=True):
+                  conv_padding=True, init='kaiming_normal', 
+                  nonlinearity='ReLU',  halve_features_on_upsample=True,
+                  ndim=2, verbose=True):
     """
     in_channels : Number of channels in the input.
     num_classes : The number of classes in the segmentation output.
@@ -476,6 +486,9 @@ def assemble_unet(in_channels, num_classes, init_num_filters=64,
         Recommended to pass batch_normalization when using short_skip==True.
     norm_kwargs : Keyword arguments to pass to normalization layers. If using
         batch_normalization, kwargs are autoset with a momentum of 0.9.
+    conv_padding : Whether to use zero-padding for convolutions. If True, the
+        output size is the same as the input size; if False, the output is
+        smaller than the input size.
     init : A string specifying (or a function defining) the initializer for
         layers.
     nonlinearity : The nonlinearity to use, passed as a string or a function.
@@ -521,6 +534,7 @@ def assemble_unet(in_channels, num_classes, init_num_filters=64,
                     'norm_kwargs': norm_kwargs,
                     'nonlinearity': nonlinearity,
                     'upsample_mode': upsample_mode,
+                    'conv_padding': conv_padding,
                     'init': init,
                     'ndim': ndim,
                     'halve_features_on_upsample': halve_features_on_upsample}
@@ -555,6 +569,7 @@ def assemble_unet(in_channels, num_classes, init_num_filters=64,
                 blocks=blocks,
                 long_skip=long_skip,
                 long_skip_merge_mode=long_skip_merge_mode,
+                conv_padding=conv_padding,
                 ndim=ndim,
                 verbose=verbose)
     return model
@@ -564,8 +579,8 @@ def assemble_vnet(in_channels, num_classes, init_num_filters=32,
                   num_pooling=4, short_skip=True, long_skip=True,
                   long_skip_merge_mode='concat', upsample_mode='conv',
                   dropout=0., normalization=None, norm_kwargs=None,
-                  init='xavier_uniform', nonlinearity='PReLU', ndim=3,
-                  verbose=True):
+                  conv_padding=True, init='xavier_uniform',
+                  nonlinearity='PReLU', ndim=3, verbose=True):
     """
     in_channels : Number of channels in the input.
     num_classes : The number of classes in the segmentation output.
@@ -588,6 +603,9 @@ def assemble_vnet(in_channels, num_classes, init_num_filters=32,
     normalization : The normalization to apply to layers (none by default).
     norm_kwargs : Keyword arguments to pass to normalization layers. If using
         batch_normalization, kwargs are autoset with a momentum of 0.9.
+    conv_padding : Whether to use zero-padding for convolutions. If True, the
+        output size is the same as the input size; if False, the output is
+        smaller than the input size.
     init : A string specifying (or a function defining) the initializer for
         layers.
     nonlinearity : The nonlinearity to use, passed as a string or a function.
@@ -619,6 +637,7 @@ def assemble_vnet(in_channels, num_classes, init_num_filters=32,
     block_kwargs = {'skip': short_skip,
                     'normalization': normalization,
                     'norm_kwargs': norm_kwargs,
+                    'conv_padding': conv_padding,
                     'init': init,
                     'nonlinearity': nonlinearity,
                     'upsample_mode': upsample_mode,
@@ -667,6 +686,7 @@ def assemble_vnet(in_channels, num_classes, init_num_filters=32,
                 blocks=blocks,
                 long_skip=long_skip,
                 long_skip_merge_mode=long_skip_merge_mode,
+                conv_padding=conv_padding,
                 ndim=ndim,
                 verbose=verbose)
     return model
@@ -678,8 +698,8 @@ def assemble_fcdensenet(in_channels, num_classes,
                         long_skip=True, skip_merge_mode='concat', 
                         upsample_mode='conv', dropout=0.2,
                         normalization=batch_normalization, norm_kwargs=None,
-                        init='kaiming_uniform', nonlinearity='ReLU', ndim=2,
-                        verbose=True):
+                        conv_padding=True, init='kaiming_uniform',
+                        nonlinearity='ReLU', ndim=2, verbose=True):
     """
     in_channels : Number of channels in the input.
     num_classes : The number of classes in the segmentation output.
@@ -710,6 +730,9 @@ def assemble_fcdensenet(in_channels, num_classes,
     normalization : The normalization to apply to layers (none by default).
     norm_kwargs : Keyword arguments to pass to normalization layers. If using
         batch_normalization, kwargs are autoset with a momentum of 0.9.
+    conv_padding : Whether to use zero-padding for convolutions. If True, the
+        output size is the same as the input size; if False, the output is
+        smaller than the input size.
     init : A string specifying (or a function defining) the initializer for
         layers.
     nonlinearity : The nonlinearity to use, passed as a string or a function.
@@ -761,6 +784,7 @@ def assemble_fcdensenet(in_channels, num_classes,
                     'upsample_mode': upsample_mode,
                     'skip_merge_mode': skip_merge_mode,
                     'nonlinearity': nonlinearity,
+                    'conv_padding': conv_padding,
                     'init': init,
                     'ndim': ndim}
     if growth_rate is not None:
@@ -787,7 +811,7 @@ def assemble_fcdensenet(in_channels, num_classes,
                                     kernel_size=3,
                                     ndim=ndim,
                                     init=init,
-                                    padding=1)
+                                    padding=conv_padding)
             kwargs = {'in_channels': init_num_filters,
                       'block_depth': block_depth[0],
                       'merge_input': True}
@@ -839,6 +863,7 @@ def assemble_fcdensenet(in_channels, num_classes,
               'normalization': normalization,
               'nonlinearity': nonlinearity,
               'dropout': dropout,
+              'conv_padding': conv_padding,
               'init': init,
               'ndim': ndim}
     blocks_up.append((tiny_block, kwargs))
@@ -853,6 +878,7 @@ def assemble_fcdensenet(in_channels, num_classes,
                 blocks=blocks,
                 long_skip=long_skip,
                 long_skip_merge_mode=skip_merge_mode,
+                conv_padding=conv_padding,
                 ndim=ndim,
                 verbose=verbose)
     return model

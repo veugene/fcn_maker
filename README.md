@@ -48,7 +48,12 @@ https://arxiv.org/abs/1511.00561
 ### ResUNet ###
 
 ```python
-fcn_maker.models.assemble_resunet(in_channels, num_classes, num_init_blocks, num_main_blocks, main_block_depth, init_num_filters, short_skip=True, long_skip=True, long_skip_merge_mode='concat', main_block=None, init_block=None, upsample_mode='repeat', dropout=0., normalization=batch_normalization, norm_kwargs=None, init='kaiming_normal', nonlinearity='ReLU', ndim=2, verbose=True)
+fcn_maker.models.assemble_resunet(in_channels, num_classes, num_init_blocks,
+    num_main_blocks, main_block_depth, init_num_filters, short_skip=True,
+    long_skip=True, long_skip_merge_mode='concat', main_block=None,
+    init_block=None, upsample_mode='repeat', dropout=0., 
+    normalization=batch_normalization, norm_kwargs=None, conv_padding=True,
+    init='kaiming_normal', nonlinearity='ReLU', ndim=2, verbose=True)
 ```
 
 This model was introduced in [1] to analyze the utility of short and long skip connections and normalization. 
@@ -69,6 +74,7 @@ This model was introduced in [1] to analyze the utility of short and long skip c
 * __dropout__ : A float [0, 1] specifying the dropout probability, introduced in every block.
 * __normalization__ : The normalization to apply to layers (by default: batch normalization). If None, no normalization is applied.
 * __norm_kwargs__ : Keyword arguments to pass to batch norm layers. For batch normalization, default momentum is 0.9.
+* __conv_padding__ : Whether to use zero-padding for convolutions. If True, the output size is the same as the input size; if False, the output is smaller than the input size.
 * __init__ : A string specifying (or a function defining) the initializer for layers.
 * __nonlinearity__ : A string (or function defining) the nonlinearity.
 * __ndim__ : The spatial dimensionality of the input and output (either 2 or 3).
@@ -100,7 +106,12 @@ In the paper, the blocks are set thus:
 ### UNet ###
 
 ```python
-fcn_maker.models.assemble_unet(in_channels, num_classes, init_num_filters=64, num_pooling=4, short_skip=False, long_skip=True, long_skip_merge_mode='concat', upsample_mode='conv', dropout=0., normalization=None, norm_kwargs=None, init='kaiming_normal', nonlinearity='ReLU', halve_features_on_upsample=True, ndim=2, verbose=True)
+fcn_maker.models.assemble_unet(in_channels, num_classes, init_num_filters=64,
+    num_pooling=4, short_skip=False, long_skip=True,
+    long_skip_merge_mode='concat', upsample_mode='conv', dropout=0.,
+    normalization=None, norm_kwargs=None, conv_padding=True,
+    init='kaiming_normal', nonlinearity='ReLU',
+    halve_features_on_upsample=True, ndim=2, verbose=True)
 ```
 
 This model was introduced in [2] for ISBI EM neuronal segmentation. It extended the long skip connections from earlier FCN work to concatenating long skips from encoder to decoder in an encoder-decoder architecture like that of [7].
@@ -118,6 +129,7 @@ There are two convolutions in a unet_block so a a list/tuple of two values can b
 * __dropout__ : A float [0, 1] specifying the dropout probability, introduced in every block.
 * __normalization__ : The normalization to apply to layers (none by default). Recommended to pass batch_normalization when using short_skip==True.
 * __norm_kwargs__ : Keyword arguments to pass to batch norm layers. For batch normalization, default momentum is 0.9.
+* __conv_padding__ : Whether to use zero-padding for convolutions. If True, the output size is the same as the input size; if False, the output is smaller than the input size.
 * __init__ : A string specifying (or a function defining) the initializer for layers.
 * __nonlinearity__ : A string (or function defining) the nonlinearity.
 * __halve_features_on_upsample__ : As in the original 2D UNet, have each block halve the number of feature maps when upsampling. This is not done in the original 3D UNet.
@@ -144,7 +156,11 @@ assemble_unet(in_channels=1,
 ### VNet ###
 
 ```python
-fcn_maker.models.assemble_vnet(in_channels, num_classes, init_num_filters=32, num_pooling=4, short_skip=True, long_skip=True, long_skip_merge_mode='concat', upsample_mode='conv', dropout=0., normalization=None, norm_kwargs=None, init=VarianceScaling(scale=3., mode='fan_avg'), nonlinearity='PReLU', ndim=3, verbose=True)
+fcn_maker.models.assemble_vnet(in_channels, num_classes, init_num_filters=32,
+    num_pooling=4, short_skip=True, long_skip=True,
+    long_skip_merge_mode='concat', upsample_mode='conv', dropout=0.,
+    normalization=None, norm_kwargs=None, conv_padding=True,
+    init='xavier_uniform', nonlinearity='PReLU', ndim=3, verbose=True)
 ```
 
 This model was introduced in [4] for prostate segmentation in MRI.
@@ -161,6 +177,7 @@ This model was introduced in [4] for prostate segmentation in MRI.
 * __dropout__ : A float [0, 1] specifying the dropout probability, introduced in every block.
 * __normalization__ : The normalization to apply to layers (none by default).
 * __norm_kwargs__ : Keyword arguments to pass to batch norm layers. For batch normalization, default momentum is 0.9.
+* __conv_padding__ : Whether to use zero-padding for convolutions. If True, the output size is the same as the input size; if False, the output is smaller than the input size.
 * __init__ : A string specifying (or a function defining) the initializer for layers.
 * __nonlinearity__ : A string (or function defining) the nonlinearity.
 * __ndim__ : The spatial dimensionality of the input and output (either 2 or 3).
@@ -178,7 +195,12 @@ model = assemble_vnet(in_channels=1, num_classes=1)
 ### FC-DenseNet (100 layers Tiramisu) ###
 
 ```python
-fcn_maker.models.assemble_fcdensenet(in_channels, num_classes, block_depth=[4, 5, 7, 10, 12, 15, 12, 10, 7, 5, 4], num_blocks=11, init_num_filters=48, growth_rate=16, long_skip=True, skip_merge_mode='concat', upsample_mode='conv', dropout=0.2, normalization=batch_normalization, norm_kwargs=None, init='kaiming_uniform', nonlinearity='ReLU', ndim=2, verbose=True)
+fcn_maker.models.assemble_fcdensenet(in_channels, num_classes,
+    block_depth=[4, 5, 7, 10, 12, 15, 12, 10, 7, 5, 4], num_blocks=11,
+    init_num_filters=48, growth_rate=16, long_skip=True,
+    skip_merge_mode='concat', upsample_mode='conv', dropout=0.2,
+    normalization=batch_normalization, norm_kwargs=None, conv_padding=True,
+    init='kaiming_uniform', nonlinearity='ReLU', ndim=2, verbose=True)
 ```
 
 This model was introduced in [5] for prostate segmentation in MRI.
@@ -197,6 +219,7 @@ If set to None, the number of filters for each dense_block will double after eac
 * __dropout__ : A float [0, 1] specifying the dropout probability, introduced in every block.
 * __normalization__ : The normalization to apply to layers (none by default).
 * __norm_kwargs__ : Keyword arguments to pass to batch norm layers. For batch normalization, default momentum is 0.9.
+* __conv_padding__ : Whether to use zero-padding for convolutions. If True, the output size is the same as the input size; if False, the output is smaller than the input size.
 * __init__ : A string specifying (or a function defining) the initializer for layers.
 * __nonlinearity__ : A string (or function defining) the nonlinearity.
 * __ndim__ : The spatial dimensionality of the input and output (either 2 or 3).
@@ -263,6 +286,7 @@ A `None` is internally replaced by `identity_block` which does nothing (beyond a
 * __blocks__ : A list of tuples, each containing a block function and a dictionary of keyword arguments to pass to it. The length must be odd-valued. The first set of blocks before the middle one is assumed to be on the downsampling (encoder) path; the second set after the middle one is assumed to be on the upsampling (decoder) path. The  first and last block do not change resolution. If instead of a tuple, a None is passed, the corresponding block will simply preserve its input, passing it onto the next block.
 * __long_skip__ : A boolean specifying whether to use long skip connections from the downward path to the upward path. These can either concatenate or sum features across.
 * __long_skip_merge_mode__ : Either or 'sum', 'concat' features across skip.
+* __conv_padding__ : Whether to use zero-padding for convolutions. If True, the output size is the same as the input size; if False, the output is smaller than the input size.
 * __init__ : A string specifying (or a function defining) the initializer for the layers that adapt features along long skip connections.
 * __ndim__ : The spatial dimensionality of the input and output (either 2 or 3).
 * __verbose__ : A boolean specifying whether to print messages about modelstructure during construction (if True).

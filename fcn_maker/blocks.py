@@ -590,7 +590,7 @@ class tiny_block(block_abstract):
                                 kernel_size=3, 
                                 ndim=ndim,
                                 init=init,
-                                padding=conv_padding)]
+                                padding=int(conv_padding))]
         if dropout > 0:
             self.op += [get_dropout(dropout, nonlinearity)]
         if upsample:
@@ -717,7 +717,7 @@ class unet_block(block_abstract):
                                 kernel_size=3,
                                 ndim=ndim,
                                 init=init,
-                                padding=conv_padding)]
+                                padding=int(conv_padding))]
         self.op += [norm_nlin_conv(in_channels=num_filters_1,
                                    out_channels=num_filters_2,
                                    kernel_size=3,

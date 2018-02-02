@@ -811,7 +811,7 @@ def assemble_fcdensenet(in_channels, num_classes,
                                     kernel_size=3,
                                     ndim=ndim,
                                     init=init,
-                                    padding=conv_padding)
+                                    padding=int(conv_padding))
             kwargs = {'in_channels': init_num_filters,
                       'block_depth': block_depth[0],
                       'merge_input': True}

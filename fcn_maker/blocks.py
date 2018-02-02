@@ -947,8 +947,10 @@ class dense_block(block_abstract):
                                   init=init,
                                   nonlinearity=nonlinearity,
                                   ndim=ndim)]
+            self._register_modules(op)
             if dropout > 0:
                 op += [get_dropout(dropout, nonlinearity)]
+                self._register_modules(op)
             self.op_dense.append(op)
             
         # Transition up (maintain num out_channels)

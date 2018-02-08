@@ -14,12 +14,12 @@ def get_nonlinearity(nonlin):
             def forward(self, input):
                 return input
         return identity_activation()
-        
+
     # Unpack keyword arguments if they are passed.
     kwargs = {}
     if not isinstance(nonlin, str) and hasattr(nonlin, '__len__'):
         nonlin, kwargs = nonlin
-    
+
     # Identify function.
     func = None
     if isinstance(nonlin, str):
@@ -32,22 +32,22 @@ def get_nonlinearity(nonlin):
     else:
         # Not a name; assume a module is passed instead.
         func = nonlin
-        
+
     return func(**kwargs)
-    
-    
+
+
 """
 Return an initializer from the core library or return the provided function.
 """
 def get_initializer(init):
     if init is None:
         return None
-        
+
     # Unpack keyword arguments if they are passed.
     kwargs = None
     if not isinstance(init, str) and hasattr(init, '__len__'):
         init, kwargs = init
-    
+
     # Identify function.
     func = None
     if isinstance(init, str):
@@ -60,15 +60,15 @@ def get_initializer(init):
     else:
         # Not a name; assume a function is passed instead.
         func = init
-        
+
     # Include keyword arguments if they exist, using a closure.
     if kwargs is not None:
         def _func(x):
             return func(x, **kwargs)
         func = _func
-        
+
     return func
-    
+
 """
 Select 2D or 3D as argument (ndim) and initialize weights on creation.
 """
@@ -88,10 +88,10 @@ class convolution(torch.nn.Module):
         self.out_channels = self.op.out_channels
         if init is not None:
             get_initializer(init)(self.op.weight.data)
-        
+
     def forward(self, input):
         return self.op(input)
-        
+
 class convolution_transpose(torch.nn.Module):
     def __init__(self, ndim=2, init=None, *args, **kwargs):
         super(convolution_transpose, self).__init__()
@@ -108,10 +108,10 @@ class convolution_transpose(torch.nn.Module):
         self.out_channels = self.op.out_channels
         if init is not None:
             get_initializer(init)(self.op.weight.data)
-        
+
     def forward(self, input):
         return self.op(input)
-    
+
 def max_pooling(ndim=2, *args, **kwargs):
     if ndim==2:
         return torch.nn.MaxPool2d(*args, **kwargs)
@@ -119,7 +119,7 @@ def max_pooling(ndim=2, *args, **kwargs):
         return torch.nn.MaxPool3d(*args, **kwargs)
     else:
         raise ValueError("ndim must be 2 or 3")
-        
+
 def batch_normalization(ndim=2, *args, **kwargs):
     if ndim==2:
         return torch.nn.BatchNorm2d(*args, **kwargs)
@@ -127,8 +127,8 @@ def batch_normalization(ndim=2, *args, **kwargs):
         return torch.nn.BatchNorm3d(*args, **kwargs)
     else:
         raise ValueError("ndim must be 2 or 3")
-    
-    
+
+
 """
 Helper to perform tensor merging.
 """
@@ -143,8 +143,8 @@ def merge(tensors, mode):
     elif mode=='concat':
         out = torch.cat(tensors, dim=1)
     return out
-    
-    
+
+
 """
 Helper to center all tensors and spatially crop to the smallest dimensions.
 """
@@ -154,7 +154,7 @@ def crop_stack(tensors):
         if not t.ndimension()==ndim:
             raise ValueError("All tensors passed to crop_stack must have the "
                              "same number of dimensions.")
-                             
+
     # Find smallest length for each dimension.
     spatial_dims = range(2, ndim)
     min_lengths = {}
@@ -162,7 +162,7 @@ def crop_stack(tensors):
         for t in tensors:
             if dim not in min_lengths or t.size()[dim] < min_lengths[dim]:
                 min_lengths[dim] = t.size()[dim]
-                
+
     # Center and crop.
     out_tensors = []
     for t in tensors:
@@ -171,11 +171,13 @@ def crop_stack(tensors):
             if t.size()[dim] > min_lengths[dim]:
                 offset = (t.size()[dim]-min_lengths[dim])//2
                 indices[dim] = slice(offset, min_lengths[dim]+offset)
-        out_tensors.append(t[indices])
-        
+
+        # tensor must be indexed with tuple of slices, not list
+        out_tensors.append(t[tuple(indices)])
+
     return out_tensors
-    
-    
+
+
 """
 Return AlphaDropout if nonlinearity is 'SELU', else Dropout.
 """
@@ -194,7 +196,7 @@ class do_subsample(torch.nn.Module):
         if ndim not in [2, 3]:
             raise ValueError('ndim must be 2 or 3')
         self.ndim = ndim
-    
+
     def forward(self, input):
         out = None
         if self.ndim==2:
@@ -227,7 +229,7 @@ class do_upsample(torch.nn.Module):
         self.mode = mode
         self.ndim = ndim
         self.init = init
-                             
+
     def forward(self, input):
         return self.op(input)
 
@@ -279,7 +281,7 @@ class norm_nlin_conv(torch.nn.Module):
                                             stride=stride,
                                             init=init,
                                             padding=padding)
-        
+
     def forward(self, input):
         out = input
         for op in self._modules.values():
@@ -301,11 +303,11 @@ class shortcut(torch.nn.Module):
         self.upsample_mode = upsample_mode
         self.init = init
         self.ndim = ndim
-        
+
         # Downsample input
         if subsample:
             self._modules['subsample'] = do_subsample(ndim=ndim)
-            
+
         # Upsample input
         if upsample:
             self._modules['upsample'] = do_upsample(mode=upsample_mode,
@@ -314,7 +316,7 @@ class shortcut(torch.nn.Module):
                                                     out_channels=in_channels,
                                                     kernel_size=2,
                                                     init=init)
-        
+
         # Expand channels of shortcut to match residual.
         # Stride appropriately to match residual (width, height)
         # Should be int if network architecture is correctly configured.
@@ -324,15 +326,15 @@ class shortcut(torch.nn.Module):
                                                 kernel_size=1,
                                                 ndim=ndim,
                                                 init=init)
-    
+
     def forward(self, input, residual):
         shortcut = input
         for op in self._modules.values():
             shortcut = op(shortcut)
         shortcut, residual = crop_stack([shortcut, residual])
         return residual+shortcut
-        
-        
+
+
 """
 Defaults block class - defines arguments that all blocks must have.
 
@@ -346,10 +348,10 @@ class block_abstract(torch.nn.Module):
         self.num_filters = num_filters
         self.subsample = subsample
         self.upsample = upsample
-        
+
     def forward(self, input):
         raise NotImplemented()
-        
+
     def _register_modules(self, modules):
         if isinstance(modules, dict):
             self._modules.update(modules)
@@ -361,7 +363,7 @@ class block_abstract(torch.nn.Module):
                 while 'layer_{}'.format(i) in self._modules:
                     i += 1
                 self._modules['layer_{}'.format(i)] = m
-        
+
     def get_out_channels(self):
         if not hasattr(self, 'out_channels'):
             raise NotImplemented("Blocks are expected to have an "
@@ -370,7 +372,7 @@ class block_abstract(torch.nn.Module):
                                  "be computed in the block.")
         return self.out_channels
 
-        
+
 """
 Identity block - do nothing except handle subsampling + upsampling.
 """
@@ -395,15 +397,15 @@ class identity_block(block_abstract):
                                  out_channels=num_filters,
                                  kernel_size=2,
                                  init=init)]
-                                 
+
         self._register_modules(self.op)
-        
+
     def forward(self, input):
         out = input
         for op in self.op:
             out = op(out)
         return out
-        
+
 
 """
 Bottleneck architecture for > 34 layer resnet.
@@ -460,7 +462,7 @@ class bottleneck(block_abstract):
                                    conv_padding=conv_padding,
                                    init=init,
                                    nonlinearity=nonlinearity,
-                                   ndim=ndim)]        
+                                   ndim=ndim)]
         if dropout > 0:
             self.op += [get_dropout(dropout, nonlinearity)]
         self._register_modules(self.op)
@@ -474,7 +476,7 @@ class bottleneck(block_abstract):
                                         init=init,
                                         ndim=ndim)
             self._register_modules({'shortcut': self.op_shortcut})
-            
+
     def forward(self, input):
         out = input
         for op in self.op:
@@ -544,7 +546,7 @@ class basic_block(block_abstract):
                                         init=init,
                                         ndim=ndim)
             self._register_modules({'shortcut': self.op_shortcut})
-                                     
+
     def forward(self, input):
         out = input
         for op in self.op:
@@ -587,7 +589,7 @@ class tiny_block(block_abstract):
             self.op += [max_pooling(kernel_size=2, ndim=ndim)]
         self.op += [convolution(in_channels=in_channels,
                                 out_channels=num_filters,
-                                kernel_size=3, 
+                                kernel_size=3,
                                 ndim=ndim,
                                 init=init,
                                 padding=int(conv_padding))]
@@ -647,7 +649,7 @@ class repeat_block(block_abstract):
         self.init = init
         self.nonlinearity = nonlinearity
         self.ndim = ndim
-        self.blocks = []   
+        self.blocks = []
         last_out_channels = None
         for i in range(repetitions):
             subsample_i = subsample if i==0 else False
@@ -670,12 +672,12 @@ class repeat_block(block_abstract):
             self.blocks.append(block)
         self.out_channels = block.out_channels
         self._register_modules(self.blocks)
-        
+
     def forward(self, input):
         out = input
         for op in self.blocks:
             out = op(out)
-        return out       
+        return out
 
 
 """
@@ -684,9 +686,9 @@ Subsampling, upsampling, and dropout handled as in the UNet.
 """
 class unet_block(block_abstract):
     def __init__(self, in_channels, num_filters, subsample=False,
-                 upsample=False, upsample_mode='conv', 
+                 upsample=False, upsample_mode='conv',
                  halve_features_on_upsample=True, skip=False, dropout=0.,
-                 normalization=None, norm_kwargs=None, conv_padding=True, 
+                 normalization=None, norm_kwargs=None, conv_padding=True,
                  init='kaiming_normal', nonlinearity='ReLU', ndim=2):
         super(unet_block, self).__init__(in_channels, num_filters,
                                          subsample, upsample)
@@ -703,13 +705,13 @@ class unet_block(block_abstract):
         self.nonlinearity = nonlinearity
         self.ndim = ndim
         self.op = []
-        
+
         # Filters can be an int or a tuple/list
         if hasattr(num_filters, '__len__'):
             num_filters_1, num_filters_2 = num_filters
         else:
             num_filters_1 = num_filters_2 = num_filters
-            
+
         if subsample:
             self.op += [max_pooling(kernel_size=2, ndim=ndim)]
         self.op += [convolution(in_channels=in_channels,
@@ -736,7 +738,7 @@ class unet_block(block_abstract):
             self.op += [get_dropout(dropout, nonlinearity)]
         out_channels = num_filters_2
         if upsample:
-            # "up-convolution" in standard 2D unet halves the number of 
+            # "up-convolution" in standard 2D unet halves the number of
             # feature maps - but not in the standard 3D unet. It's just a
             # user-settable option in this block, regardless of ndim.
             if halve_features_on_upsample:
@@ -755,7 +757,7 @@ class unet_block(block_abstract):
                                     in_channels=num_filters_2,
                                     out_channels=out_channels_up,
                                     init=init)]
-            
+
             self.op += [get_nonlinearity(nonlinearity)]
             out_channels = out_channels_up
         self.out_channels = out_channels
@@ -778,7 +780,7 @@ class unet_block(block_abstract):
         if self.skip:
             out = self.op_shortcut(input, out)
         return out
-    
+
 
 """
 Processing block as in the VNet.
@@ -823,7 +825,7 @@ class vnet_block(block_abstract):
                                        init=init,
                                        nonlinearity=nonlinearity,
                                        ndim=ndim)]
-        
+
             if dropout > 0:
                 self.op += [get_dropout(dropout, nonlinearity)]
         self._register_modules(self.op)
@@ -866,7 +868,7 @@ class vnet_block(block_abstract):
         for op in self.op_upsample:
             out = op(out)
         return out
-    
+
 
 """
 Dense block (as in a DenseNet), as implemented in the 100 layer Tiramisu.
@@ -905,7 +907,7 @@ class dense_block(block_abstract):
         self.nonlinearity = nonlinearity
         self.ndim = ndim
         self.op = []
-        
+
         # Transition down (preserve num out_channels)
         if subsample:
             self.op += [norm_nlin_conv(in_channels=in_channels,
@@ -920,7 +922,7 @@ class dense_block(block_abstract):
             if dropout > 0:
                 self.op += [get_dropout(dropout, nonlinearity)]
             self.op += [max_pooling(kernel_size=2, ndim=ndim)]
-            
+
         # If 'sum' mode, make the channel dimension match.
         if skip_merge_mode=='sum':
             if in_channels != num_filters:
@@ -934,7 +936,7 @@ class dense_block(block_abstract):
         # Build the dense block.
         self.op_dense = []
         for i in range(block_depth):
-            op = []            
+            op = []
             in_channels_i = in_channels + num_filters*i
             if skip_merge_mode=='sum':
                 in_channels_i = num_filters
@@ -952,7 +954,7 @@ class dense_block(block_abstract):
                 op += [get_dropout(dropout, nonlinearity)]
                 self._register_modules(op)
             self.op_dense.append(op)
-            
+
         # Transition up (maintain num out_channels)
         self.op_upsample = []
         if upsample:
@@ -962,15 +964,15 @@ class dense_block(block_abstract):
                                              out_channels=out_channels,
                                              kernel_size=3,
                                              init=init)]
-                                             
+
         self._register_modules(self.op+self.op_upsample)
-    
+
     def forward(self, input):
         # Prepare input.
         out = input
         for op in self.op:
             out = op(out)
-        
+
         # Build dense block.
         tensors = [out]
         for op in self.op_dense:
@@ -983,7 +985,7 @@ class dense_block(block_abstract):
             tensors = crop_stack(tensors)
             out = merge(tensors, mode=self.skip_merge_mode)
         tensors = crop_stack(tensors)
-        
+
         # Block's output - merge input in?
         #
         # Regardless, all representations inside the block (all conv outputs)
@@ -999,9 +1001,9 @@ class dense_block(block_abstract):
             # out_channels.
             if len(tensors[1:]) > 1:
                 out = merge(tensors[1:], mode=self.skip_merge_mode)
-        
+
         # Upsample
         for op in self.op_upsample:
             out = op(out)
-        
+
         return out

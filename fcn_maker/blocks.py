@@ -139,7 +139,7 @@ def merge(tensors, mode):
     if mode=='sum':
         out = tensors[0]
         for t in tensors[1:]:
-            out += t
+            out = out + t
     elif mode=='concat':
         out = torch.cat(tensors, dim=1)
     return out

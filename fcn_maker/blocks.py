@@ -6,7 +6,7 @@ import torch
 """
 Return a nonlinearity from the core library or return the provided function.
 """
-def get_nonlinearity(nonlin):
+def get_nonlinearity(nonlin, **kwargs):
     if nonlin is None:
         class identity_activation(torch.nn.Module):
             def __init__(self):
@@ -14,12 +14,7 @@ def get_nonlinearity(nonlin):
             def forward(self, input):
                 return input
         return identity_activation()
-
-    # Unpack keyword arguments if they are passed.
-    kwargs = {}
-    if not isinstance(nonlin, str) and hasattr(nonlin, '__len__'):
-        nonlin, kwargs = nonlin
-
+        
     # Identify function.
     func = None
     if isinstance(nonlin, str):

@@ -8,7 +8,7 @@ from .blocks import (convolution,
                      batch_normalization,
                      get_nonlinearity,
                      merge,
-                     crop_stack,
+                     adjust_to_size,
                      bottleneck,
                      basic_block,
                      tiny_block,
@@ -174,9 +174,12 @@ class fcn(torch.nn.Module):
                 if self.conv is not None:
                     x = self.conv(x)
                     
-                # Spatially crop the tensors to the smallest dimensions 
-                # between them. Center tensors before cropping.
-                x, x_concat = crop_stack([x, x_concat])
+                # If needed, resize the tensor on the upward path to the size
+                # of the tensor being skipped over. This ensures that the 
+                # tensor size at this resolution is being recovered.
+                if np.any(np.not_equal(x.size()[2:], x_concat.size()[2:])):
+                    x = adjust_to_size(x, size=x_concat.size()[2:])
+                    #x.data = adjust_to_size(x.data, size=x_concat.size()[2:])
                 
                 # Merge.
                 merged = merge([x, x_concat], mode=self.long_skip_merge_mode)

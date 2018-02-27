@@ -174,6 +174,50 @@ def crop_stack(tensors):
 
 
 """
+Helper to adjust the spatial size of a tensor, centering it and zero-padding 
+and cropping, as necessary.
+"""
+def adjust_to_size(tensor, size):
+    ndim = len(size)
+    if tensor.ndimension()-2!=ndim:
+        raise ValueError("`tensor` has {} spatial dimensions while `size` "
+                         "has {}.".format(tensor.ndimension()-2, ndim))
+    
+    # Determine size difference.
+    t_size = tensor.size()[2:]
+    diff = [size[i]-t_size[i] for i in range(ndim)]
+    
+    # Determine cropping indices
+    indices_crop = [slice(None, None)]*(ndim+2)
+    for dim, d in enumerate(diff):
+        if d<0:
+            indices_crop[dim+2] = slice(d//2, t_size[dim]-(d//2+d%2))
+    indices_crop = tuple(indices_crop)
+        
+    # Zero-pad and crop.
+    if sum([d>0 for d in diff]):    # Needs zero-padding
+        out_tensor = tensor
+        for dim, d in enumerate(diff):
+            if d>0:
+                if d//2:
+                    shape = list(tensor.size())
+                    shape[dim+2] = d//2
+                    concat_0 = torch.zeros(shape).type_as(tensor)
+                    out_tensor = torch.cat([concat_0, out_tensor], dim=dim+2)
+                if d//2 + d%2:
+                    shape = list(tensor.size())
+                    shape[dim+2] = d//2 + d%2
+                    concat_1 = torch.zeros(shape).type_as(tensor)
+                    out_tensor = torch.cat([out_tensor, concat_1], dim=dim+2)
+    elif sum([d<0 for d in diff]):    # Needs cropping
+        out_tensor = tensor[indices_crop]
+    else:
+        out_tensor = tensor
+        
+    return out_tensor
+    
+    
+"""
 Return AlphaDropout if nonlinearity is 'SELU', else Dropout.
 """
 def get_dropout(dropout, nonlin=None):

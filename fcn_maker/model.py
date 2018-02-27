@@ -248,10 +248,7 @@ class fcn(torch.nn.Module):
             if self.num_classes==1:
                 x = F.sigmoid(x)
             else:
-                # Softmax that works on ND inputs.
-                e = torch.exp(x - torch.max(x, dim=1, keepdim=True)[0])
-                s = torch.sum(e, dim=1, keepdim=True)
-                x = e / s
+                x = F.softmax(x, dim=1)
         
         return x
 

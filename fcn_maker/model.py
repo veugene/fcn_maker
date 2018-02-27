@@ -173,13 +173,6 @@ class fcn(torch.nn.Module):
                 # Adjust number of channels to match x_concat.
                 if self.conv is not None:
                     x = self.conv(x)
-                    
-                # If needed, resize the tensor on the upward path to the size
-                # of the tensor being skipped over. This ensures that the 
-                # tensor size at this resolution is being recovered.
-                if np.any(np.not_equal(x.size()[2:], x_concat.size()[2:])):
-                    x = adjust_to_size(x, size=x_concat.size()[2:])
-                    #x.data = adjust_to_size(x.data, size=x_concat.size()[2:])
                 
                 # Merge.
                 merged = merge([x, x_concat], mode=self.long_skip_merge_mode)
@@ -241,7 +234,15 @@ class fcn(torch.nn.Module):
         for b in range(0, depth):
             if self.long_skip and self.long_skip_list[b] is not None:
                 x_concat = tensors[depth-b-1]
-                x = self.long_skip_list[b](x, x_concat)
+                
+                # If needed, resize the tensor on the upward path to the size
+                # of the tensor being skipped over. This ensures that the 
+                # tensor size at this resolution is being recovered.
+                if np.any(np.not_equal(x.size()[2:], x_concat.size()[2:])):
+                    x = adjust_to_size(x, size=x_concat.size()[2:])
+                
+                if self.long_skip:
+                    x = self.long_skip_list[b](x, x_concat)
             block = self.blocks_instantiated[depth+b+1]
             x = block(x)
     

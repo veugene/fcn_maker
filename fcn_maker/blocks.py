@@ -386,13 +386,13 @@ class identity_block(block_abstract):
         if subsample:
             self.op += [do_subsample(ndim=ndim)]
         if upsample:
-            self.op += [updample(mode=upsample_mode,
-                                 ndim=ndim,
-                                 in_channels=in_channels,
-                                 out_channels=num_filters,
-                                 kernel_size=2,
-                                 init=init)]
-
+            self.op += [do_upsample(mode=upsample_mode,
+                                    ndim=ndim,
+                                    in_channels=in_channels,
+                                    out_channels=num_filters,
+                                    kernel_size=2,
+                                    init=init)]
+                                 
         self._register_modules(self.op)
 
     def forward(self, input):

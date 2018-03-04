@@ -200,12 +200,12 @@ def adjust_to_size(tensor, size):
         for dim, d in enumerate(diff):
             if d>0:
                 if d//2:
-                    shape = list(tensor.size())
+                    shape = list(out_tensor.size())
                     shape[dim+2] = d//2
                     concat_0 = torch.zeros(shape).type_as(tensor)
                     out_tensor = torch.cat([concat_0, out_tensor], dim=dim+2)
                 if d//2 + d%2:
-                    shape = list(tensor.size())
+                    shape = list(out_tensor.size())
                     shape[dim+2] = d//2 + d%2
                     concat_1 = torch.zeros(shape).type_as(tensor)
                     out_tensor = torch.cat([out_tensor, concat_1], dim=dim+2)

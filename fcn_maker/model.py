@@ -60,13 +60,11 @@ class fcn(torch.nn.Module):
             raise ValueError("ndim must be either 2 or 3")
         
         # `None` block tuples are replaced by identity_block.
-        last_out_channels = in_channels
         blocks = list(blocks)
         for i, block in enumerate(blocks):
             if block is None:
                 blocks[i] = (identity_block,
-                             {'num_filters': last_out_channels})
-                last_out_channels = blocks[i].out_channels
+                             {'num_filters': in_channels})
             
         self.in_channels = in_channels
         self.out_channels = None            # Computed later.

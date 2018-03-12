@@ -191,7 +191,7 @@ def adjust_to_size(tensor, size):
     indices_crop = [slice(None, None)]*(ndim+2)
     for dim, d in enumerate(diff):
         if d<0:
-            indices_crop[dim+2] = slice(d//2, t_size[dim]-(d//2+d%2))
+            indices_crop[dim+2] = slice(-d//2, t_size[dim]-(-d//2+d%2))
     indices_crop = tuple(indices_crop)
         
     # Zero-pad and crop.

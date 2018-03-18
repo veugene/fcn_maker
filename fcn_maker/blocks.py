@@ -24,8 +24,11 @@ def get_nonlinearity(nonlin, **kwargs):
         except AttributeError:
             raise ValueError("Specified nonlinearity ({}) not found."
                              "".format(nonlin))
+    elif hasattr(nonlin, '__len__'):
+        # Not a name but has length; assume this is a module and kwargs.
+        func, kwargs = nonlin
     else:
-        # Not a name; assume a module is passed instead.
+        # Not a name and no length; assume a module is passed.
         func = nonlin
 
     return func(**kwargs)

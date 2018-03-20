@@ -24,8 +24,11 @@ def get_nonlinearity(nonlin, **kwargs):
         except AttributeError:
             raise ValueError("Specified nonlinearity ({}) not found."
                              "".format(nonlin))
+    elif hasattr(nonlin, '__len__'):
+        # Not a name but has length; assume this is a module and kwargs.
+        func, kwargs = nonlin
     else:
-        # Not a name; assume a module is passed instead.
+        # Not a name and no length; assume a module is passed.
         func = nonlin
 
     return func(**kwargs)
@@ -191,7 +194,7 @@ def adjust_to_size(tensor, size):
     indices_crop = [slice(None, None)]*(ndim+2)
     for dim, d in enumerate(diff):
         if d<0:
-            indices_crop[dim+2] = slice(d//2, t_size[dim]-(d//2+d%2))
+            indices_crop[dim+2] = slice(-d//2, t_size[dim]-(-d//2+d%2))
     indices_crop = tuple(indices_crop)
         
     # Zero-pad and crop.
@@ -209,6 +212,10 @@ def adjust_to_size(tensor, size):
                     shape[dim+2] = d//2 + d%2
                     concat_1 = torch.zeros(shape).type_as(tensor)
                     out_tensor = torch.cat([out_tensor, concat_1], dim=dim+2)
+        if isinstance(out_tensor, torch.autograd.Variable):
+            out_tensor.data = out_tensor.data.contiguous()
+        else:   # is a tensor
+            out_tensor = out_tensor.contiguous()
     elif sum([d<0 for d in diff]):    # Needs cropping
         out_tensor = tensor[indices_crop]
     else:

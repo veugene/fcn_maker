@@ -209,9 +209,21 @@ class fcn(torch.nn.Module):
                                           ndim=ndim)
             self._modules['classifier'] = self.classifier
     
-    def forward(self, input):
+    def forward(self, input, return_blocks=None):
         '''
         Connect all the blocks on the contracting and expanding paths.
+        
+        return_blocks (list) : An optional list of indices specifying which
+            blocks' outputs to return along with the final model output.
+            
+            
+        RETURN:
+        
+        If `return_blocks` is not provided, a single Variable is returned.
+            
+        Else, a (Variable, dict) tuple is returned. The dictionary contains
+        each requested block output, keyed by the provided block index.
+        Eg: (model_output_variable, {1: out_block_1, 3: out_block_3})
         '''
     
         # Book keeping
@@ -242,7 +254,7 @@ class fcn(torch.nn.Module):
                 if self.long_skip:
                     x = self.long_skip_list[b](x, x_concat)
             block = self.blocks_instantiated[depth+b+1]
-            x = block(x)
+            x = tensors[depth+b+1] = block(x)
     
         # Output
         if self.classifier is not None:
@@ -251,6 +263,9 @@ class fcn(torch.nn.Module):
                 x = F.sigmoid(x)
             else:
                 x = F.softmax(x, dim=1)
+                
+        if return_blocks is not None:
+            return x, dict([(idx, tensors[idx]) for idx in return_blocks])
         
         return x
 

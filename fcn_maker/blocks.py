@@ -85,7 +85,7 @@ class convolution(torch.nn.Module):
         self.in_channels = self.op.in_channels
         self.out_channels = self.op.out_channels
         if init is not None:
-            get_initializer(init)(self.op.weight.data)
+            self.op.weight.data = get_initializer(init)(self.op.weight.data)
 
     def forward(self, input):
         return self.op(input)
@@ -105,7 +105,7 @@ class convolution_transpose(torch.nn.Module):
         self.in_channels = self.op.in_channels
         self.out_channels = self.op.out_channels
         if init is not None:
-            get_initializer(init)(self.op.weight.data)
+            self.op.weight.data = get_initializer(init)(self.op.weight.data)
 
     def forward(self, input):
         return self.op(input)

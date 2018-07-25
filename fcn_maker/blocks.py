@@ -288,7 +288,7 @@ class norm_nlin_conv(torch.nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size,
                  subsample=False, upsample=False, upsample_mode='repeat',
                  nonlinearity='ReLU', normalization=batch_normalization,
-                 norm_kwargs=None, conv_padding=True, init='kaiming_normal',
+                 norm_kwargs=None, conv_padding=True, init='kaiming_normal_',
                  ndim=2):
         super(norm_nlin_conv, self).__init__()
         if norm_kwargs is None:
@@ -340,7 +340,7 @@ Adds a shortcut between input and residual block and merges them with 'sum'.
 """
 class shortcut(torch.nn.Module):
     def __init__(self, in_channels, out_channels, subsample, upsample,
-                 upsample_mode='repeat', init='kaiming_normal', ndim=2):
+                 upsample_mode='repeat', init='kaiming_normal_', ndim=2):
         super(shortcut, self).__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
@@ -425,7 +425,7 @@ Identity block - do nothing except handle subsampling + upsampling.
 class identity_block(block_abstract):
     def __init__(self, in_channels, num_filters, subsample=False,
                  upsample=False, upsample_mode='repeat', ndim=2,
-                 kernel_size=2, init='kaiming_normal'):
+                 kernel_size=2, init='kaiming_normal_'):
         super(identity_block, self).__init__(in_channels, num_filters,
                                              subsample, upsample)
         self.out_channels = num_filters
@@ -462,7 +462,7 @@ class bottleneck(block_abstract):
     def __init__(self, in_channels, num_filters, subsample=False,
                  upsample=False, upsample_mode='repeat', skip=True,
                  dropout=0., normalization=batch_normalization,
-                 norm_kwargs=None, conv_padding=True, init='kaiming_normal',
+                 norm_kwargs=None, conv_padding=True, init='kaiming_normal_',
                  nonlinearity='ReLU', ndim=2):
         super(bottleneck, self).__init__(in_channels, num_filters,
                                          subsample, upsample)
@@ -541,8 +541,8 @@ class basic_block(block_abstract):
     def __init__(self, in_channels, num_filters, subsample=False,
                  upsample=False, upsample_mode='repeat', skip=True, dropout=0.,
                  normalization=batch_normalization, norm_kwargs=None,
-                 conv_padding=True, init='kaiming_normal', nonlinearity='ReLU',
-                 ndim=2):
+                 conv_padding=True, init='kaiming_normal_',
+                 nonlinearity='ReLU', ndim=2):
         super(basic_block, self).__init__(in_channels, num_filters,
                                           subsample, upsample)
         if norm_kwargs is None:
@@ -609,8 +609,8 @@ class tiny_block(block_abstract):
     def __init__(self, in_channels, num_filters, subsample=False,
                  upsample=False, upsample_mode='repeat', skip=True, dropout=0.,
                  normalization=batch_normalization, norm_kwargs=None,
-                 conv_padding=True, init='kaiming_normal', nonlinearity='ReLU',
-                 ndim=2):
+                 conv_padding=True, init='kaiming_normal_',
+                 nonlinearity='ReLU', ndim=2):
         super(tiny_block, self).__init__(in_channels, num_filters,
                                              subsample, upsample)
         if norm_kwargs is None:
@@ -675,7 +675,7 @@ class repeat_block(block_abstract):
     def __init__(self, block_function, in_channels, num_filters, repetitions,
                  skip=True, dropout=0., subsample=False, upsample=False,
                  upsample_mode='repeat', normalization=batch_normalization,
-                 norm_kwargs=None, conv_padding=True, init='kaiming_normal',
+                 norm_kwargs=None, conv_padding=True, init='kaiming_normal_',
                  nonlinearity='ReLU', ndim=2):
         super(repeat_block, self).__init__(in_channels, num_filters,
                                            subsample, upsample)
@@ -735,7 +735,7 @@ class unet_block(block_abstract):
                  upsample=False, upsample_mode='conv',
                  halve_features_on_upsample=True, skip=False, dropout=0.,
                  normalization=None, norm_kwargs=None, conv_padding=True,
-                 init='kaiming_normal', nonlinearity='ReLU', ndim=2):
+                 init='kaiming_normal_', nonlinearity='ReLU', ndim=2):
         super(unet_block, self).__init__(in_channels, num_filters,
                                          subsample, upsample)
         if norm_kwargs is None:

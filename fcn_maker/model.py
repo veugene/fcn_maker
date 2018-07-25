@@ -47,7 +47,7 @@ class fcn(torch.nn.Module):
     """
     def __init__(self, in_channels, num_classes, blocks,
                  long_skip=True, long_skip_merge_mode='concat',
-                 conv_padding=True, init='kaiming_normal', ndim=2,
+                 conv_padding=True, init='kaiming_normal_', ndim=2,
                  verbose=True):
         super(fcn, self).__init__()
         
@@ -262,7 +262,7 @@ def assemble_resunet(in_channels, num_classes, num_init_blocks,
                      main_block=None, init_block=None, upsample_mode='repeat',
                      dropout=0., normalization=batch_normalization,
                      norm_kwargs=None, conv_padding=True,
-                     init='kaiming_normal', nonlinearity='ReLU', ndim=2,
+                     init='kaiming_normal_', nonlinearity='ReLU', ndim=2,
                      verbose=True):
     """
     in_channels : Number of channels in the input.
@@ -455,7 +455,7 @@ def assemble_unet(in_channels, num_classes, init_num_filters=64,
                   num_pooling=4, short_skip=False, long_skip=True,
                   long_skip_merge_mode='concat', upsample_mode='conv',
                   dropout=0., normalization=None, norm_kwargs=None,
-                  conv_padding=True, init='kaiming_normal', 
+                  conv_padding=True, init='kaiming_normal_', 
                   nonlinearity='ReLU',  halve_features_on_upsample=True,
                   ndim=2, verbose=True):
     """

@@ -119,12 +119,24 @@ def max_pooling(ndim=2, *args, **kwargs):
         raise ValueError("ndim must be 2 or 3")
 
 def batch_normalization(ndim=2, *args, **kwargs):
+    if ndim==1:
+        return torch.nn.BatchNorm1d(*args, **kwargs)
     if ndim==2:
         return torch.nn.BatchNorm2d(*args, **kwargs)
     elif ndim==3:
         return torch.nn.BatchNorm3d(*args, **kwargs)
     else:
         raise ValueError("ndim must be 2 or 3")
+
+def instance_normalization(ndim=2, *args, **kwargs):
+    if ndim==1:
+        return torch.nn.InstanceNorm1d(*args, **kwargs)
+    if ndim==2:
+        return torch.nn.InstanceNorm2d(*args, **kwargs)
+    elif ndim==3:
+        return torch.nn.InstanceNorm3d(*args, **kwargs)
+    else:
+        raise ValueError("ndim must be 1, 2, or 3")
 
 
 """
@@ -304,7 +316,7 @@ class norm_nlin_conv(torch.nn.Module):
         self.norm_kwargs = norm_kwargs
         self.conv_padding = conv_padding
         self.init = init
-        self.ndim =ndim
+        self.ndim = ndim
         if normalization is not None:
             self._modules['norm'] = normalization(ndim=ndim,
                                                   num_features=in_channels,

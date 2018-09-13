@@ -257,8 +257,9 @@ def assemble_resunet(in_channels, num_classes, num_init_blocks,
                      main_block=None, init_block=None, upsample_mode='repeat',
                      dropout=0., normalization=batch_normalization,
                      norm_kwargs=None, conv_padding=True, 
-                     padding_mode='constant', init='kaiming_normal_',
-                     nonlinearity='ReLU', ndim=2, verbose=True):
+                     padding_mode='constant', kernel_size=3,
+                     init='kaiming_normal_', nonlinearity='ReLU', ndim=2,
+                     verbose=True):
     """
     in_channels : Number of channels in the input.
     num_classes : The number of classes in the segmentation output.
@@ -303,6 +304,7 @@ def assemble_resunet(in_channels, num_classes, num_init_blocks,
         smaller than the input size.
     padding_mode : Choice of 'constant' (zero-padding; default), 'reflect',
         or 'replicate', as in pytorch.
+    kernel_size : Convolution kernel size for kernels whose size is > 2.
     init : A string specifying (or a function defining) the initializer for
         layers.
     nonlinearity : A string (or function defining) the nonlinearity.
@@ -359,6 +361,7 @@ def assemble_resunet(in_channels, num_classes, num_init_blocks,
                     'nonlinearity': nonlinearity,
                     'conv_padding': conv_padding,
                     'padding_mode': padding_mode,
+                    'kernel_size': kernel_size,
                     'init': init,
                     'ndim': ndim}
     
@@ -378,6 +381,7 @@ def assemble_resunet(in_channels, num_classes, num_init_blocks,
               'dropout': dropout,
               'conv_padding': conv_padding,
               'padding_mode': padding_mode,
+              'kernel_size': kernel_size,
               'init': init,
               'ndim': ndim}
     blocks_down.append((tiny_block, kwargs))
@@ -431,6 +435,7 @@ def assemble_resunet(in_channels, num_classes, num_init_blocks,
               'dropout': dropout,
               'conv_padding': conv_padding,
               'padding_mode': padding_mode,
+              'kernel_size': kernel_size,
               'init': init,
               'ndim': ndim}
     blocks_up.append((tiny_block, kwargs))
@@ -454,7 +459,7 @@ def assemble_unet(in_channels, num_classes, init_num_filters=64,
                   num_pooling=4, short_skip=False, long_skip=True,
                   long_skip_merge_mode='concat', upsample_mode='conv',
                   dropout=0., normalization=None, norm_kwargs=None,
-                  conv_padding=True, padding_mode='constant',
+                  conv_padding=True, padding_mode='constant', kernel_size=3,
                   init='kaiming_normal_',  nonlinearity='ReLU', 
                   halve_features_on_upsample=True, ndim=2, verbose=True):
     """
@@ -490,6 +495,7 @@ def assemble_unet(in_channels, num_classes, init_num_filters=64,
         smaller than the input size.
     padding_mode : Choice of 'constant' (zero-padding; default), 'reflect',
         or 'replicate', as in pytorch.
+    kernel_size : Convolution kernel size for kernels whose size is > 2.
     init : A string specifying (or a function defining) the initializer for
         layers.
     nonlinearity : The nonlinearity to use, passed as a string or a function.
@@ -537,6 +543,7 @@ def assemble_unet(in_channels, num_classes, init_num_filters=64,
                     'upsample_mode': upsample_mode,
                     'conv_padding': conv_padding,
                     'padding_mode': padding_mode,
+                    'kernel_size': kernel_size,
                     'init': init,
                     'ndim': ndim,
                     'halve_features_on_upsample': halve_features_on_upsample}
@@ -580,7 +587,7 @@ def assemble_vnet(in_channels, num_classes, init_num_filters=32,
                   num_pooling=4, short_skip=True, long_skip=True,
                   long_skip_merge_mode='concat', upsample_mode='conv',
                   dropout=0., normalization=None, norm_kwargs=None,
-                  conv_padding=True, padding_mode='constant',
+                  conv_padding=True, padding_mode='constant', kernel_size=5,
                   init='xavier_uniform', nonlinearity='PReLU', ndim=3,
                   verbose=True):
     """
@@ -610,6 +617,7 @@ def assemble_vnet(in_channels, num_classes, init_num_filters=32,
         smaller than the input size.
     padding_mode : Choice of 'constant' (zero-padding; default), 'reflect',
         or 'replicate', as in pytorch.
+    kernel_size : Convolution kernel size for kernels whose size is > 2.
     init : A string specifying (or a function defining) the initializer for
         layers.
     nonlinearity : The nonlinearity to use, passed as a string or a function.
@@ -643,6 +651,7 @@ def assemble_vnet(in_channels, num_classes, init_num_filters=32,
                     'norm_kwargs': norm_kwargs,
                     'conv_padding': conv_padding,
                     'padding_mode': padding_mode,
+                    'kernel_size': kernel_size,
                     'init': init,
                     'nonlinearity': nonlinearity,
                     'upsample_mode': upsample_mode,
@@ -703,8 +712,8 @@ def assemble_fcdensenet(in_channels, num_classes,
                         upsample_mode='conv', dropout=0.2,
                         normalization=batch_normalization, norm_kwargs=None,
                         conv_padding=True, padding_mode='constant',
-                        init='kaiming_uniform', nonlinearity='ReLU', ndim=2,
-                        verbose=True):
+                        kernel_size=3 init='kaiming_uniform',
+                        nonlinearity='ReLU', ndim=2, verbose=True):
     """
     in_channels : Number of channels in the input.
     num_classes : The number of classes in the segmentation output.
@@ -740,6 +749,7 @@ def assemble_fcdensenet(in_channels, num_classes,
         smaller than the input size.
     padding_mode : Choice of 'constant' (zero-padding; default), 'reflect',
         or 'replicate', as in pytorch.
+    kernel_size : Convolution kernel size for kernels whose size is > 2.
     init : A string specifying (or a function defining) the initializer for
         layers.
     nonlinearity : The nonlinearity to use, passed as a string or a function.
@@ -793,6 +803,7 @@ def assemble_fcdensenet(in_channels, num_classes,
                     'nonlinearity': nonlinearity,
                     'conv_padding': conv_padding,
                     'padding_mode': padding_mode,
+                    'kernel_size': kernel_size,
                     'init': init,
                     'ndim': ndim}
     if growth_rate is not None:
@@ -875,6 +886,7 @@ def assemble_fcdensenet(in_channels, num_classes,
               'dropout': dropout,
               'conv_padding': conv_padding,
               'padding_mode': padding_mode,
+              'kernel_size': kernel_size,
               'init': init,
               'ndim': ndim}
     blocks_up.append((tiny_block, kwargs))

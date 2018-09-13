@@ -1,6 +1,7 @@
 from __future__ import (print_function,
                         division)
 import torch
+from torch.functional import F
 
 
 """
@@ -71,7 +72,8 @@ def get_initializer(init):
 Select 2D or 3D as argument (ndim) and initialize weights on creation.
 """
 class convolution(torch.nn.Module):
-    def __init__(self, ndim=2, init=None, *args, **kwargs):
+    def __init__(self, ndim=2, init=None, padding=None,
+                 padding_mode='constant', *args, **kwargs):
         super(convolution, self).__init__()
         if ndim==2:
             conv = torch.nn.Conv2d
@@ -81,6 +83,8 @@ class convolution(torch.nn.Module):
             ValueError("ndim must be 2 or 3")
         self.ndim = ndim
         self.init = init
+        self.padding = padding
+        self.padding_mode = padding_mode
         self.op = conv(*args, **kwargs)
         self.in_channels = self.op.in_channels
         self.out_channels = self.op.out_channels
@@ -88,7 +92,14 @@ class convolution(torch.nn.Module):
             self.op.weight.data = get_initializer(init)(self.op.weight.data)
 
     def forward(self, input):
-        return self.op(input)
+        out = input
+        if self.padding is not None:
+            padding = self.padding
+            if not hasattr(padding, '__len__'):
+                padding = [self.padding]*self.ndim*2
+            out = F.pad(out, pad=padding, mode=self.padding_mode, value=0)
+        out = self.op(out)
+        return out
 
 class convolution_transpose(torch.nn.Module):
     def __init__(self, ndim=2, init=None, *args, **kwargs):
@@ -192,7 +203,7 @@ def crop_stack(tensors):
 Helper to adjust the spatial size of a tensor, centering it and zero-padding 
 and cropping, as necessary.
 """
-def adjust_to_size(tensor, size):
+def adjust_to_size(tensor, size, padding_mode='constant'):
     ndim = len(size)
     if tensor.ndimension()-2!=ndim:
         raise ValueError("`tensor` has {} spatial dimensions while `size` "
@@ -212,22 +223,10 @@ def adjust_to_size(tensor, size):
     # Zero-pad and crop.
     if sum([d>0 for d in diff]):    # Needs zero-padding
         out_tensor = tensor
+        pad = []
         for dim, d in enumerate(diff):
-            if d>0:
-                if d//2:
-                    shape = list(out_tensor.size())
-                    shape[dim+2] = d//2
-                    concat_0 = torch.zeros(shape).type_as(tensor)
-                    out_tensor = torch.cat([concat_0, out_tensor], dim=dim+2)
-                if d//2 + d%2:
-                    shape = list(out_tensor.size())
-                    shape[dim+2] = d//2 + d%2
-                    concat_1 = torch.zeros(shape).type_as(tensor)
-                    out_tensor = torch.cat([out_tensor, concat_1], dim=dim+2)
-        if isinstance(out_tensor, torch.autograd.Variable):
-            out_tensor.data = out_tensor.data.contiguous()
-        else:   # is a tensor
-            out_tensor = out_tensor.contiguous()
+            pad.extend([int(d//2), int(d//2+d%2)])
+        out_tensor = F.pad(out_tensor, pad=pad, mode=padding_mode, value=0)
     elif sum([d<0 for d in diff]):    # Needs cropping
         out_tensor = tensor[indices_crop]
     else:
@@ -300,8 +299,8 @@ class norm_nlin_conv(torch.nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size,
                  subsample=False, upsample=False, upsample_mode='repeat',
                  nonlinearity='ReLU', normalization=batch_normalization,
-                 norm_kwargs=None, conv_padding=True, init='kaiming_normal_',
-                 ndim=2):
+                 norm_kwargs=None, conv_padding=True, padding_mode='constant',
+                 init='kaiming_normal_', ndim=2):
         super(norm_nlin_conv, self).__init__()
         if norm_kwargs is None:
             norm_kwargs = {}
@@ -315,6 +314,7 @@ class norm_nlin_conv(torch.nn.Module):
         self.normalization = normalization
         self.norm_kwargs = norm_kwargs
         self.conv_padding = conv_padding
+        self.padding_mode = padding_mode
         self.init = init
         self.ndim = ndim
         if normalization is not None:
@@ -338,7 +338,8 @@ class norm_nlin_conv(torch.nn.Module):
                                             ndim=ndim,
                                             stride=stride,
                                             init=init,
-                                            padding=padding)
+                                            padding=padding,
+                                            padding_mode=padding_mode)
 
     def forward(self, input):
         out = input
@@ -437,13 +438,12 @@ Identity block - do nothing except handle subsampling + upsampling.
 class identity_block(block_abstract):
     def __init__(self, in_channels, num_filters, subsample=False,
                  upsample=False, upsample_mode='repeat', ndim=2,
-                 kernel_size=2, init='kaiming_normal_'):
+                 init='kaiming_normal_'):
         super(identity_block, self).__init__(in_channels, num_filters,
                                              subsample, upsample)
         self.out_channels = num_filters
         self.upsample_mode = upsample_mode
         self.ndim = ndim
-        self.kernel_size = kernel_size
         self.init = init
         self.op = []
         if subsample:
@@ -474,8 +474,8 @@ class bottleneck(block_abstract):
     def __init__(self, in_channels, num_filters, subsample=False,
                  upsample=False, upsample_mode='repeat', skip=True,
                  dropout=0., normalization=batch_normalization,
-                 norm_kwargs=None, conv_padding=True, init='kaiming_normal_',
-                 nonlinearity='ReLU', ndim=2):
+                 norm_kwargs=None, conv_padding=True, padding_mode='constant',
+                 init='kaiming_normal_', nonlinearity='ReLU', ndim=2):
         super(bottleneck, self).__init__(in_channels, num_filters,
                                          subsample, upsample)
         if norm_kwargs is None:
@@ -487,6 +487,7 @@ class bottleneck(block_abstract):
         self.normalization = normalization
         self.norm_kwargs = norm_kwargs
         self.conv_padding = conv_padding
+        self.padding_mode = padding_mode
         self.init = init
         self.nonlinearity = nonlinearity
         self.ndim = ndim
@@ -498,6 +499,7 @@ class bottleneck(block_abstract):
                                    normalization=normalization,
                                    norm_kwargs=norm_kwargs,
                                    conv_padding=conv_padding,
+                                   padding_mode=padding_mode,
                                    init=init,
                                    nonlinearity=nonlinearity,
                                    ndim=ndim)]
@@ -507,6 +509,7 @@ class bottleneck(block_abstract):
                                    normalization=normalization,
                                    norm_kwargs=norm_kwargs,
                                    conv_padding=conv_padding,
+                                   padding_mode=padding_mode,
                                    init=init,
                                    nonlinearity=nonlinearity,
                                    ndim=ndim)]
@@ -518,6 +521,7 @@ class bottleneck(block_abstract):
                                    normalization=normalization,
                                    norm_kwargs=norm_kwargs,
                                    conv_padding=conv_padding,
+                                   padding_mode=padding_mode,
                                    init=init,
                                    nonlinearity=nonlinearity,
                                    ndim=ndim)]
@@ -553,8 +557,8 @@ class basic_block(block_abstract):
     def __init__(self, in_channels, num_filters, subsample=False,
                  upsample=False, upsample_mode='repeat', skip=True, dropout=0.,
                  normalization=batch_normalization, norm_kwargs=None,
-                 conv_padding=True, init='kaiming_normal_',
-                 nonlinearity='ReLU', ndim=2):
+                 conv_padding=True, padding_mode='constant',
+                 init='kaiming_normal_', nonlinearity='ReLU', ndim=2):
         super(basic_block, self).__init__(in_channels, num_filters,
                                           subsample, upsample)
         if norm_kwargs is None:
@@ -566,6 +570,7 @@ class basic_block(block_abstract):
         self.normalization = normalization
         self.norm_kwargs = norm_kwargs
         self.conv_padding = conv_padding
+        self.padding_mode = padding_mode
         self.init = init
         self.nonlinearity = nonlinearity
         self.ndim = ndim
@@ -577,6 +582,7 @@ class basic_block(block_abstract):
                                    normalization=normalization,
                                    norm_kwargs=norm_kwargs,
                                    conv_padding=conv_padding,
+                                   padding_mode=padding_mode,
                                    init=init,
                                    nonlinearity=nonlinearity,
                                    ndim=ndim)]
@@ -590,6 +596,7 @@ class basic_block(block_abstract):
                                    normalization=normalization,
                                    norm_kwargs=norm_kwargs,
                                    conv_padding=conv_padding,
+                                   padding_mode=padding_mode,
                                    init=init,
                                    nonlinearity=nonlinearity,
                                    ndim=ndim)]
@@ -621,8 +628,8 @@ class tiny_block(block_abstract):
     def __init__(self, in_channels, num_filters, subsample=False,
                  upsample=False, upsample_mode='repeat', skip=True, dropout=0.,
                  normalization=batch_normalization, norm_kwargs=None,
-                 conv_padding=True, init='kaiming_normal_',
-                 nonlinearity='ReLU', ndim=2):
+                 conv_padding=True, padding_mode='constant',
+                 init='kaiming_normal_', nonlinearity='ReLU', ndim=2):
         super(tiny_block, self).__init__(in_channels, num_filters,
                                              subsample, upsample)
         if norm_kwargs is None:
@@ -634,6 +641,7 @@ class tiny_block(block_abstract):
         self.normalization = normalization
         self.norm_kwargs = norm_kwargs
         self.conv_padding = conv_padding
+        self.padding_mode = padding_mode
         self.init = init
         self.nonlinearity = nonlinearity
         self.ndim = ndim
@@ -650,7 +658,8 @@ class tiny_block(block_abstract):
                                 kernel_size=3,
                                 ndim=ndim,
                                 init=init,
-                                padding=int(conv_padding))]
+                                padding=int(conv_padding),
+                                padding_mode=padding_mode)]
         if dropout > 0:
             self.op += [get_dropout(dropout, nonlinearity)]
         if upsample:
@@ -687,8 +696,8 @@ class repeat_block(block_abstract):
     def __init__(self, block_function, in_channels, num_filters, repetitions,
                  skip=True, dropout=0., subsample=False, upsample=False,
                  upsample_mode='repeat', normalization=batch_normalization,
-                 norm_kwargs=None, conv_padding=True, init='kaiming_normal_',
-                 nonlinearity='ReLU', ndim=2):
+                 norm_kwargs=None, conv_padding=True, padding_mode='constant',
+                 init='kaiming_normal_', nonlinearity='ReLU', ndim=2):
         super(repeat_block, self).__init__(in_channels, num_filters,
                                            subsample, upsample)
         if repetitions<=0:
@@ -704,6 +713,7 @@ class repeat_block(block_abstract):
         self.normalization = normalization
         self.norm_kwargs = norm_kwargs
         self.conv_padding = conv_padding
+        self.padding_mode = padding_mode
         self.init = init
         self.nonlinearity = nonlinearity
         self.ndim = ndim
@@ -724,6 +734,7 @@ class repeat_block(block_abstract):
                                    norm_kwargs=norm_kwargs,
                                    nonlinearity=nonlinearity,
                                    conv_padding=conv_padding,
+                                   padding_mode=padding_mode,
                                    init=init,
                                    ndim=ndim)
             last_out_channels = block.get_out_channels()
@@ -747,7 +758,8 @@ class unet_block(block_abstract):
                  upsample=False, upsample_mode='conv',
                  halve_features_on_upsample=True, skip=False, dropout=0.,
                  normalization=None, norm_kwargs=None, conv_padding=True,
-                 init='kaiming_normal_', nonlinearity='ReLU', ndim=2):
+                 padding_mode='constant', init='kaiming_normal_',
+                 nonlinearity='ReLU', ndim=2):
         super(unet_block, self).__init__(in_channels, num_filters,
                                          subsample, upsample)
         if norm_kwargs is None:
@@ -759,6 +771,7 @@ class unet_block(block_abstract):
         self.normalization = normalization
         self.norm_kwargs = norm_kwargs
         self.conv_padding = conv_padding
+        self.padding_mode = padding_mode
         self.init = init
         self.nonlinearity = nonlinearity
         self.ndim = ndim
@@ -777,13 +790,15 @@ class unet_block(block_abstract):
                                 kernel_size=3,
                                 ndim=ndim,
                                 init=init,
-                                padding=int(conv_padding))]
+                                padding=int(conv_padding),
+                                padding_mode=padding_mode)]
         self.op += [norm_nlin_conv(in_channels=num_filters_1,
                                    out_channels=num_filters_2,
                                    kernel_size=3,
                                    normalization=normalization,
                                    norm_kwargs=norm_kwargs,
                                    conv_padding=conv_padding,
+                                   padding_mode=padding_mode,
                                    init=init,
                                    nonlinearity=nonlinearity,
                                    ndim=ndim)]
@@ -847,7 +862,8 @@ class vnet_block(block_abstract):
     def __init__(self, in_channels, num_filters, num_conv=3, subsample=False,
                  upsample=False, upsample_mode='conv', skip=True, dropout=0.,
                  normalization=None, norm_kwargs=None, conv_padding=True,
-                 init='xavier_uniform', nonlinearity='ReLU', ndim=3):
+                 padding_mode='constant', init='xavier_uniform',
+                 nonlinearity='ReLU', ndim=3):
         super(vnet_block, self).__init__(in_channels, num_filters,
                                          subsample, upsample)
         if norm_kwargs is None:
@@ -860,6 +876,7 @@ class vnet_block(block_abstract):
         self.normalization = normalization
         self.norm_kwargs = norm_kwargs
         self.conv_padding = conv_padding
+        self.padding_mode = padding_mode
         self.init = init
         self.nonlinearity = nonlinearity
         self.ndim = ndim
@@ -880,6 +897,7 @@ class vnet_block(block_abstract):
                                        normalization=normalization,
                                        norm_kwargs=norm_kwargs,
                                        conv_padding=conv_padding,
+                                       padding_mode=padding_mode,
                                        init=init,
                                        nonlinearity=nonlinearity,
                                        ndim=ndim)]
@@ -943,8 +961,8 @@ class dense_block(block_abstract):
                  subsample=False, upsample=False, upsample_mode='conv',
                  skip_merge_mode='concat', merge_input=True, dropout=0.,
                  normalization=batch_normalization, norm_kwargs=None,
-                 conv_padding=True,  init='kaiming_uniform',
-                 nonlinearity='ReLU', ndim=2):
+                 conv_padding=True, padding_mode='constant',
+                 init='kaiming_uniform', nonlinearity='ReLU', ndim=2):
         super(dense_block, self).__init__(in_channels, num_filters,
                                           subsample, upsample)
         if norm_kwargs is None:
@@ -961,6 +979,7 @@ class dense_block(block_abstract):
         self.normalization = normalization
         self.norm_kwargs = norm_kwargs
         self.conv_padding = conv_padding
+        self.padding_mode = padding_mode
         self.init = init
         self.nonlinearity = nonlinearity
         self.ndim = ndim
@@ -973,7 +992,6 @@ class dense_block(block_abstract):
                                        kernel_size=1,
                                        normalization=normalization,
                                        norm_kwargs=norm_kwargs,
-                                       conv_padding=conv_padding,
                                        init=init,
                                        nonlinearity=nonlinearity,
                                        ndim=ndim)]
@@ -1004,6 +1022,7 @@ class dense_block(block_abstract):
                                   normalization=normalization,
                                   norm_kwargs=norm_kwargs,
                                   conv_padding=conv_padding,
+                                  padding_mode=padding_mode,
                                   init=init,
                                   nonlinearity=nonlinearity,
                                   ndim=ndim)]

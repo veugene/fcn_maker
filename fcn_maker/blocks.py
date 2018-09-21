@@ -7,32 +7,26 @@ from torch.functional import F
 """
 Return a nonlinearity from the core library or return the provided function.
 """
-def get_nonlinearity(nonlin, **kwargs):
+def get_nonlinearity(nonlin):
     if nonlin is None:
+        # Return identity module (should be a module).
         class identity_activation(torch.nn.Module):
             def __init__(self):
                 super(identity_activation, self).__init__()
             def forward(self, input):
                 return input
-        return identity_activation()
-        
-    # Identify function.
-    func = None
-    if isinstance(nonlin, str):
+        module = identity_activation
+    elif isinstance(nonlin, str):
         # Find the nonlinearity by name.
         try:
-            func = getattr(torch.nn.modules.activation, nonlin)
+            module = getattr(torch.nn.modules.activation, nonlin)
         except AttributeError:
             raise ValueError("Specified nonlinearity ({}) not found."
                              "".format(nonlin))
-    elif hasattr(nonlin, '__len__'):
-        # Not a name but has length; assume this is a module and kwargs.
-        func, kwargs = nonlin
     else:
         # Not a name and no length; assume a module is passed.
-        func = nonlin
-
-    return func(**kwargs)
+        module = nonlin
+    return module()
 
 
 """
@@ -40,16 +34,8 @@ Return an initializer from the core library or return the provided function.
 """
 def get_initializer(init):
     if init is None:
-        return None
-
-    # Unpack keyword arguments if they are passed.
-    kwargs = None
-    if not isinstance(init, str) and hasattr(init, '__len__'):
-        init, kwargs = init
-
-    # Identify function.
-    func = None
-    if isinstance(init, str):
+        func = lambda x:x
+    elif isinstance(init, str):
         # Find the initializer by name.
         try:
             func = getattr(torch.nn.init, init)
@@ -59,13 +45,6 @@ def get_initializer(init):
     else:
         # Not a name; assume a function is passed instead.
         func = init
-
-    # Include keyword arguments if they exist, using a closure.
-    if kwargs is not None:
-        def _func(x):
-            return func(x, **kwargs)
-        func = _func
-
     return func
 
 """

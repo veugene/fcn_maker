@@ -636,12 +636,13 @@ class tiny_block(block_abstract):
         self.op += [get_nonlinearity(nonlinearity)]
         if subsample:
             self.op += [max_pooling(kernel_size=2, ndim=ndim)]
+        padding = kernel_size//2 if conv_padding else 0
         self.op += [convolution(in_channels=in_channels,
                                 out_channels=num_filters,
                                 kernel_size=kernel_size,
                                 ndim=ndim,
                                 init=init,
-                                padding=int(conv_padding),
+                                padding=padding,
                                 padding_mode=padding_mode)]
         if dropout > 0:
             self.op += [get_dropout(dropout, nonlinearity)]
@@ -772,12 +773,13 @@ class unet_block(block_abstract):
 
         if subsample:
             self.op += [max_pooling(kernel_size=2, ndim=ndim)]
+        padding = kernel_size//2 if conv_padding else 0
         self.op += [convolution(in_channels=in_channels,
                                 out_channels=num_filters_1,
                                 kernel_size=kernel_size,
                                 ndim=ndim,
                                 init=init,
-                                padding=int(conv_padding),
+                                padding=padding,
                                 padding_mode=padding_mode)]
         self.op += [norm_nlin_conv(in_channels=num_filters_1,
                                    out_channels=num_filters_2,

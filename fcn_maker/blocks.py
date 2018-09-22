@@ -313,7 +313,18 @@ class norm_nlin_conv(torch.nn.Module):
         stride = 1
         if subsample:
             stride = 2
-        padding = kernel_size//2 if conv_padding else 0
+        if conv_padding:
+            # For odd kernel sizes, equivalent to kernel_size//2.
+            # For even kernel sizes, two cases:
+            #    (1) [kernel_size//2-1, kernel_size//2] @ stride 1
+            #    (2) kernel_size//2 @ stride 2
+            # This way, even kernel sizes yield the same output size as
+            # odd kernel sizes. When subsampling, even kernel sizes allow
+            # possible downscaling without aliasing.
+            padding = [(kernel_size-1)//2,
+                       (kernel_size-int(subsample))//2]*ndim
+        else:
+            padding = 0
         self._modules['conv'] = convolution(in_channels=in_channels,
                                             out_channels=out_channels,
                                             kernel_size=kernel_size,
@@ -639,7 +650,10 @@ class tiny_block(block_abstract):
         self.op += [get_nonlinearity(nonlinearity)]
         if subsample:
             self.op += [max_pooling(kernel_size=2, ndim=ndim)]
-        padding = kernel_size//2 if conv_padding else 0
+        if conv_padding:
+            padding = [(kernel_size-1)//2, kernel_size//2]*ndim
+        else:
+            padding = 0
         self.op += [convolution(in_channels=in_channels,
                                 out_channels=num_filters,
                                 kernel_size=kernel_size,

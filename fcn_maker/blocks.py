@@ -128,6 +128,9 @@ def instance_normalization(ndim=2, *args, **kwargs):
     else:
         raise ValueError("ndim must be 1, 2, or 3")
 
+def group_normalization(num_features, ndim=None, *args, **kwargs):
+    return torch.nn.GroupNorm(*args, num_channels=num_features, **kwargs)
+
 
 """
 Helper to perform tensor merging.

@@ -727,7 +727,7 @@ def assemble_fcdensenet(in_channels, num_classes,
                         upsample_mode='conv', dropout=0.2,
                         normalization=batch_normalization, norm_kwargs=None,
                         conv_padding=True, padding_mode='constant',
-                        kernel_size=3 init='kaiming_uniform',
+                        kernel_size=3, init='kaiming_uniform',
                         nonlinearity='ReLU', ndim=2, verbose=True):
     """
     in_channels : Number of channels in the input.

@@ -206,8 +206,11 @@ def adjust_to_size(tensor, size, padding_mode='constant'):
     if sum([d>0 for d in diff]):    # Needs zero-padding
         out_tensor = tensor
         pad = []
-        for dim, d in enumerate(diff):
-            pad.extend([int(d//2), int(d//2+d%2)])
+        for dim, d in enumerate(diff[::-1]):
+            if d>0:
+                pad.extend([int(d//2), int(d//2+d%2)])
+            else:
+                pad.extend([0, 0])
         out_tensor = F.pad(out_tensor, pad=pad, mode=padding_mode, value=0)
     elif sum([d<0 for d in diff]):    # Needs cropping
         out_tensor = tensor[indices_crop]

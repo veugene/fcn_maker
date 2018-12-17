@@ -53,7 +53,7 @@ fcn_maker.models.assemble_resunet(in_channels, num_classes, num_init_blocks,
     long_skip=True, long_skip_merge_mode='concat', main_block=None,
     init_block=None, upsample_mode='repeat', dropout=0., 
     normalization=batch_normalization, norm_kwargs=None, conv_padding=True,
-    init='kaiming_normal', nonlinearity='ReLU', ndim=2, verbose=True)
+    init='kaiming_normal_', nonlinearity='ReLU', ndim=2, verbose=True)
 ```
 
 This model was introduced in [1] to analyze the utility of short and long skip connections and normalization. 
@@ -110,7 +110,7 @@ fcn_maker.models.assemble_unet(in_channels, num_classes, init_num_filters=64,
     num_pooling=4, short_skip=False, long_skip=True,
     long_skip_merge_mode='concat', upsample_mode='conv', dropout=0.,
     normalization=None, norm_kwargs=None, conv_padding=True,
-    init='kaiming_normal', nonlinearity='ReLU',
+    init='kaiming_normal_', nonlinearity='ReLU',
     halve_features_on_upsample=True, ndim=2, verbose=True)
 ```
 
@@ -160,7 +160,7 @@ fcn_maker.models.assemble_vnet(in_channels, num_classes, init_num_filters=32,
     num_pooling=4, short_skip=True, long_skip=True,
     long_skip_merge_mode='concat', upsample_mode='conv', dropout=0.,
     normalization=None, norm_kwargs=None, conv_padding=True,
-    init='xavier_uniform', nonlinearity='PReLU', ndim=3, verbose=True)
+    init='xavier_uniform_', nonlinearity='PReLU', ndim=3, verbose=True)
 ```
 
 This model was introduced in [4] for prostate segmentation in MRI.
@@ -200,7 +200,7 @@ fcn_maker.models.assemble_fcdensenet(in_channels, num_classes,
     init_num_filters=48, growth_rate=16, long_skip=True,
     skip_merge_mode='concat', upsample_mode='conv', dropout=0.2,
     normalization=batch_normalization, norm_kwargs=None, conv_padding=True,
-    init='kaiming_uniform', nonlinearity='ReLU', ndim=2, verbose=True)
+    init='kaiming_uniform_', nonlinearity='ReLU', ndim=2, verbose=True)
 ```
 
 This model was introduced in [5] for prostate segmentation in MRI.
@@ -249,7 +249,7 @@ An FCN can be built from a list of blocks (modules). Blocks can be found in `fcn
 ### The model module ###
 
 ```python
-class fcn(in_channels, num_classes, blocks, long_skip=True, long_skip_merge_mode='concat', init='kaiming_normal', ndim=2, verbose=True)
+class fcn(in_channels, num_classes, blocks, long_skip=True, long_skip_merge_mode='concat', init='kaiming_normal_', ndim=2, verbose=True)
 ```
 
 The standard model structure is composed of the following sets of blocks:
